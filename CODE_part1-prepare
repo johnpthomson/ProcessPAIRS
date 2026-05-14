@@ -1,0 +1,513 @@
+####################################
+# ProcessPairs script v8-5
+# John Thomson
+# 14-05-26
+#updated
+####################################
+
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+
+# --- Load data ---
+setwd("C:/Users/jthoms24/Documents/John_work/PAIRS/Analysis/Summary49")
+snv_sh <- read.delim("snv_sh.txt", stringsAsFactors = FALSE)
+cn_sh <- read.delim("cn_sh.txt", stringsAsFactors = FALSE)
+
+
+# --- Clean CN column names ---
+colnames(cn_sh) <- gsub("-call-output", "", colnames(cn_sh))
+colnames(cn_sh) <- gsub("(?i)_post$", "_Post", colnames(cn_sh), perl = TRUE)
+colnames(cn_sh) <- gsub("(?i)_pre$", "_Pre", colnames(cn_sh), perl = TRUE)
+
+# --- Identify CN columns only ---
+cn_cols <- setdiff(colnames(cn_sh), c("gene", "Oncokb"))
+
+# --- Convert CN data from wide to long ---
+cn_long <- cn_sh %>%
+  select(gene, all_of(cn_cols)) %>%
+  pivot_longer(
+    cols = -gene,
+    names_to = "Tumor_Sample_Barcode",
+    values_to = "cn"
+  ) %>%
+  mutate(
+    Tumor_Sample_Barcode = str_replace_all(Tumor_Sample_Barcode, "(?i)_post$", "_Post"),
+    Tumor_Sample_Barcode = str_replace_all(Tumor_Sample_Barcode, "(?i)_pre$", "_Pre"),
+    Tumor_Sample_Barcode = str_replace_all(Tumor_Sample_Barcode, "-", "_"),
+    Tumor_Sample_Barcode = str_trim(Tumor_Sample_Barcode)
+  )
+
+# --- Normalize SNV sample names the same way ---
+snv_sh <- snv_sh %>%
+  mutate(
+    Tumor_Sample_Barcode = str_replace_all(Tumor_Sample_Barcode, "(?i)_post$", "_Post"),
+    Tumor_Sample_Barcode = str_replace_all(Tumor_Sample_Barcode, "(?i)_pre$", "_Pre"),
+    Tumor_Sample_Barcode = str_replace_all(Tumor_Sample_Barcode, "-", "_"),
+    Tumor_Sample_Barcode = str_trim(Tumor_Sample_Barcode)
+  )
+
+# --- Add gDNA samples with CN=2 if missing ---
+gDNA_samples <- unique(snv_sh$Tumor_Sample_Barcode[grepl("gDNA", snv_sh$Tumor_Sample_Barcode, ignore.case = TRUE)])
+all_genes <- unique(cn_long$gene)
+
+gDNA_cn <- expand.grid(
+  gene = all_genes,
+  Tumor_Sample_Barcode = gDNA_samples,
+  stringsAsFactors = FALSE
+) %>%
+  left_join(cn_long, by = c("gene", "Tumor_Sample_Barcode")) %>%
+  mutate(cn = ifelse(is.na(cn), 2, cn)) %>%
+  distinct(gene, Tumor_Sample_Barcode, cn)
+
+cn_long_full <- bind_rows(
+  cn_long,
+  gDNA_cn %>% filter(Tumor_Sample_Barcode %in% gDNA_samples)
+) %>%
+  distinct(gene, Tumor_Sample_Barcode, cn)
+
+# --- Prepare SNV data ---
+snv_long <- snv_sh %>%
+  rename(
+    snv.type = Variant_Classification,
+    snv.vaf = vaf,
+    snv.id = snv_id
+  ) %>%
+  select(gene, Tumor_Sample_Barcode, snv.id, snv.type, snv.vaf) %>%
+  group_by(gene, Tumor_Sample_Barcode) %>%
+  mutate(snv_num = row_number()) %>%
+  ungroup()
+
+snv_wide <- snv_long %>%
+  pivot_wider(
+    id_cols = c(gene, Tumor_Sample_Barcode),
+    names_from = snv_num,
+    values_from = c(snv.id, snv.type, snv.vaf),
+    names_glue = "{.value}.{snv_num}"
+  )
+
+# --- Merge SNV and CN ---
+merged <- full_join(
+  snv_wide,
+  cn_long_full,
+  by = c("gene", "Tumor_Sample_Barcode")
+)
+
+# --- Extract patient and sample type ---
+merged <- merged %>%
+  mutate(
+    patient = str_remove(Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$"),
+    sample_type = str_extract(Tumor_Sample_Barcode, "(gDNA|Pre|Post)")
+  )
+  
+brca_context_df <- merged %>%
+  filter(gene %in% c("BRCA1", "BRCA2")) %>%
+  group_by(patient) %>%
+  summarise(
+    has_gDNA_snv = any(
+      sample_type == "gDNA" &
+      (!is.na(snv.id.1) | !is.na(snv.id.2)),
+      na.rm = TRUE
+    ),
+    has_pre_snv = any(
+      sample_type == "Pre" &
+      (!is.na(snv.id.1) | !is.na(snv.id.2)),
+      na.rm = TRUE
+    ),
+    has_pre_cn_loss = any(
+      sample_type == "Pre" & cn < 2,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    BRCA_context = case_when(
+      has_gDNA_snv ~ "1.BRCA_gDNA",
+      !has_gDNA_snv & has_pre_snv ~ "2.BRCA_PreOnly_SNV",
+      !has_gDNA_snv & !has_pre_snv & has_pre_cn_loss ~ "3.BRCA_PreOnly_CN",
+      TRUE ~ "4.BRCA_None"
+    )
+  )
+
+merged <- merged %>%
+  left_join(brca_context_df %>% select(patient, BRCA_context),
+            by = "patient")
+
+# --- SNV presence annotation ---
+snv_info_long <- snv_long %>%
+  mutate(
+    patient = str_remove(Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$"),
+    sample_type = str_extract(Tumor_Sample_Barcode, "(gDNA|Pre|Post)")
+  ) %>%
+  distinct(gene, patient, snv.id, sample_type)
+
+snv_info_df <- snv_info_long %>%
+  group_by(gene, patient, snv.id) %>%
+  summarise(
+    sample_list = list(sort(unique(sample_type))),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    snv_info = ifelse(
+      lengths(sample_list) == 1 & sapply(sample_list, function(x) x[1]) == "Post",
+      "Post_only",
+      sapply(sample_list, function(x) paste(x, collapse = ","))
+    )
+  ) %>%
+  select(-sample_list)
+
+# Join SNV info for each SNV ID (1 and 2)
+merged <- merged %>%
+  left_join(snv_info_df %>% rename(snv.id.1 = snv.id, snv_info.snv.id.1 = snv_info),
+            by = c("gene", "patient", "snv.id.1")) %>%
+  left_join(snv_info_df %>% rename(snv.id.2 = snv.id, snv_info.snv.id.2 = snv_info),
+            by = c("gene", "patient", "snv.id.2"))
+
+# --- CN presence annotation ---
+cn_info_df <- cn_long_full %>%
+  mutate(
+    patient = str_remove(Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$"),
+    sample_type = str_extract(Tumor_Sample_Barcode, "(gDNA|Pre|Post)")
+  ) %>%
+  filter(cn != 2) %>%
+  distinct(gene, patient, sample_type) %>%
+  group_by(gene, patient) %>%
+  summarise(
+    sample_list = list(sort(unique(sample_type))),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    cn_info = ifelse(
+      lengths(sample_list) == 1 & sapply(sample_list, function(x) x[1]) == "Post",
+      "Post_only",
+      sapply(sample_list, function(x) paste(x, collapse = ","))
+    )
+  ) %>%
+  select(-sample_list)
+
+merged <- merged %>%
+  left_join(cn_info_df, by = c("gene", "patient"))
+
+# --- Improved CN relapse logic ---
+# Extract CN per gene-patient and sample_type (Pre and Post)
+cn_pre_post <- cn_long_full %>%
+  mutate(
+    patient = str_remove(Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$"),
+    sample_type = str_extract(Tumor_Sample_Barcode, "(gDNA|Pre|Post)")
+  ) %>%
+  filter(sample_type %in% c("Pre", "Post")) %>%
+  select(gene, patient, sample_type, cn) %>%
+  pivot_wider(names_from = sample_type, values_from = cn) %>%
+  filter(!is.na(Pre) & !is.na(Post)) %>%  # ensure both Pre and Post exist
+  mutate(
+    cn_relapse_flag = case_when(
+      (Pre %in% c(0, 1) & Post >= 2) ~ TRUE,  # restored from loss
+      (Pre == 2 & Post > 2) ~ TRUE,           # increased from normal
+      TRUE ~ FALSE
+    )
+  ) %>%
+  select(gene, patient, cn_relapse_flag)
+
+# Join CN relapse flag back to merged
+merged <- merged %>%
+  left_join(cn_pre_post, by = c("gene", "patient")) %>%
+  mutate(cn_relapse_flag = ifelse(is.na(cn_relapse_flag), FALSE, cn_relapse_flag))
+
+# --- Update relapse column ---
+merged <- merged %>%
+  mutate(
+    relapse = case_when(
+      BRCA_context == "BRCA_None" ~ NA_character_,
+      snv_info.snv.id.1 == "Post_only" |
+      snv_info.snv.id.2 == "Post_only" |
+      cn_relapse_flag ~ "relapse",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(-patient, -sample_type, -cn_relapse_flag)
+
+# --- Order columns ---
+snv_cols <- grep("^snv", colnames(merged), value = TRUE)
+merged <- merged %>%
+  select(gene, Tumor_Sample_Barcode, all_of(snv_cols), cn, snv_info.snv.id.1, snv_info.snv.id.2, cn_info, relapse)
+
+# --- Write output ---
+write.table(merged, "merged_snv_cn_with_info.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+############################ plotting ############################
+
+# First, get unique patients and relapse info per gene
+brca1_relapse <- merged %>%
+  filter(gene == "BRCA1") %>%
+  mutate(patient = str_remove(Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$")) %>%
+  group_by(patient) %>%
+  summarise(
+    snv_relapse = any(snv_info.snv.id.1 == "Post_only" | snv_info.snv.id.2 == "Post_only"),
+    cn_relapse = any(cn_info == "Post_only"),
+    relapse = snv_relapse | cn_relapse   # <- FIXED: relapse now includes both SNV or CN relapse
+  )
+
+brca2_relapse <- merged %>%
+  filter(gene == "BRCA2") %>%
+  mutate(patient = str_remove(Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$")) %>%
+  group_by(patient) %>%
+  summarise(
+    snv_relapse = any(snv_info.snv.id.1 == "Post_only" | snv_info.snv.id.2 == "Post_only"),
+    cn_relapse = any(cn_info == "Post_only"),
+    relapse = snv_relapse | cn_relapse   # <- FIXED here too
+  )
+
+# Combine BRCA1 and BRCA2 relapse info
+combined <- full_join(brca1_relapse, brca2_relapse, by = "patient", suffix = c(".BRCA1", ".BRCA2")) %>%
+  mutate(
+    snv_relapse.BRCA1 = ifelse(is.na(snv_relapse.BRCA1), FALSE, snv_relapse.BRCA1),
+    cn_relapse.BRCA1 = ifelse(is.na(cn_relapse.BRCA1), FALSE, cn_relapse.BRCA1),
+    relapse.BRCA1 = ifelse(is.na(relapse.BRCA1), FALSE, relapse.BRCA1),
+    snv_relapse.BRCA2 = ifelse(is.na(snv_relapse.BRCA2), FALSE, snv_relapse.BRCA2),
+    cn_relapse.BRCA2 = ifelse(is.na(cn_relapse.BRCA2), FALSE, cn_relapse.BRCA2),
+    relapse.BRCA2 = ifelse(is.na(relapse.BRCA2), FALSE, relapse.BRCA2),
+    group = case_when(
+      relapse.BRCA1 & relapse.BRCA2 ~ "BRCA1 + BRCA2",
+      relapse.BRCA1 & !relapse.BRCA2 ~ "BRCA1 only",
+      !relapse.BRCA1 & relapse.BRCA2 ~ "BRCA2 only",
+      TRUE ~ "Neither"
+    )
+  )
+
+# Determine relapse source per patient
+combined <- combined %>%
+  rowwise() %>%
+  mutate(
+    snv_relapse = snv_relapse.BRCA1 | snv_relapse.BRCA2,
+    cn_relapse = cn_relapse.BRCA1 | cn_relapse.BRCA2,
+    relapse_source = case_when(
+      snv_relapse & cn_relapse ~ "SNV + CN",
+      snv_relapse & !cn_relapse ~ "SNV only",
+      !snv_relapse & cn_relapse ~ "CN only",
+      TRUE ~ "No relapse"
+    )
+  ) %>%
+  ungroup()
+
+# Summarize for plotting
+plot_data <- combined %>%
+  group_by(group, relapse_source) %>%
+  summarise(num_patients = n(), .groups = "drop")
+
+# Complete missing combinations so "No relapse" shows for all groups if applicable
+plot_data <- tidyr::complete(plot_data, group, relapse_source, fill = list(num_patients = 0))
+
+# Set factor levels for consistent plotting
+plot_data$group <- factor(plot_data$group, levels = c("BRCA1 only", "BRCA2 only", "BRCA1 + BRCA2", "Neither"))
+plot_data$relapse_source <- factor(plot_data$relapse_source, levels = c("No relapse", "SNV only", "CN only", "SNV + CN"))
+
+# Define colors including grey for No relapse
+colors <- c(
+  "No relapse" = "grey80",
+  "SNV only" = "#1f77b4",
+  "CN only" = "#ff7f0e",
+  "SNV + CN" = "#2ca02c"
+)
+
+# Plot with counts labeled on bars
+ggplot(plot_data, aes(x = group, y = num_patients, fill = relapse_source)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = ifelse(num_patients > 0, num_patients, "")),
+            position = position_stack(vjust = 0.5), size = 4, color = "black") +
+  scale_fill_manual(values = colors) +
+  labs(
+    title = "Number of Patients with Relapse by Group and Event Type",
+    x = "Patient Group",
+    y = "Number of Patients",
+    fill = "Relapse Source"
+  ) +
+  theme_minimal()
+
+################ summary pot based on pre mut
+
+# --- Identify patients with Pre BRCA SNV or CN events ---
+pre_brca_events <- merged %>%
+  filter(gene %in% c("BRCA1", "BRCA2"),
+         str_detect(Tumor_Sample_Barcode, "_Pre$")) %>%
+  mutate(patient = str_remove(Tumor_Sample_Barcode, "_Pre$")) %>%
+  group_by(patient) %>%
+  summarise(
+    has_pre_event = any(!is.na(snv.id.1) | !is.na(snv.id.2) | cn != 2),
+    .groups = "drop"
+  )
+
+# Join Pre BRCA event status to combined table
+combined <- combined %>%
+  left_join(pre_brca_events, by = "patient") %>%
+  mutate(has_pre_event = ifelse(is.na(has_pre_event), FALSE, has_pre_event))
+
+# Build relapse status for plotting
+combined_plot2 <- combined %>%
+  mutate(relapse_status = ifelse(relapse_source == "No relapse", "No relapse", "Relapse")) %>%
+  group_by(relapse_status, has_pre_event) %>%
+  summarise(num_patients = n(), .groups = "drop") %>%
+  mutate(pre_status = ifelse(has_pre_event, "Pre BRCA event", "No Pre BRCA event"))
+
+# Set factor levels
+combined_plot2$relapse_status <- factor(combined_plot2$relapse_status, levels = c("Relapse", "No relapse"))
+combined_plot2$pre_status <- factor(combined_plot2$pre_status, levels = c("Pre BRCA event", "No Pre BRCA event"))
+
+# Define colors
+colors2 <- c("Pre BRCA event" = "#1f77b4", "No Pre BRCA event" = "grey80")
+
+# Plot: Pre BRCA status by relapse
+ggplot(combined_plot2, aes(x = relapse_status, y = num_patients, fill = pre_status)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = ifelse(num_patients > 0, num_patients, "")),
+            position = position_stack(vjust = 0.5), size = 5, color = "black") +
+  scale_fill_manual(values = colors2) +
+  labs(
+    title = "Pre-treatment BRCA1/2 Events by Relapse Status",
+    x = "Relapse Status",
+    y = "Number of Patients",
+    fill = "Pre BRCA Event"
+  ) +
+  theme_minimal()
+
+###################################
+################### summary plots
+# --- Step 1: Classify each patient-gene-sample_type event ---
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+
+total_patients <- 38  # Known total patients
+
+# Step 1: Get events per patient/sample_type/gene
+brca_events <- merged %>%
+  filter(gene %in% c("BRCA1", "BRCA2")) %>%
+  mutate(
+    patient = str_remove(Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$"),
+    sample_type = str_extract(Tumor_Sample_Barcode, "(gDNA|Pre|Post)"),
+    has_snv = !is.na(snv.id.1) | !is.na(snv.id.2),
+    has_cn = cn != 2,
+    event_group = case_when(
+      has_snv & has_cn ~ "SNV + CN",
+      has_snv & !has_cn ~ "SNV only",
+      !has_snv & has_cn ~ "CN only",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(event_group)) %>%
+  select(patient, sample_type, gene, event_group) %>%
+  distinct()
+
+# Step 2: Identify patients with any BRCA event by gene
+brca1_patients <- brca_events %>%
+  filter(gene == "BRCA1") %>%
+  distinct(patient, sample_type, event_group)
+
+brca2_patients <- brca_events %>%
+  filter(gene == "BRCA2") %>%
+  distinct(patient, sample_type, event_group)
+
+# Step 3: Full list of patient/sample_type from merged data
+all_patients_samples <- merged %>%
+  mutate(patient = str_remove(Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$"),
+         sample_type = str_extract(Tumor_Sample_Barcode, "(gDNA|Pre|Post)")) %>%
+  distinct(patient, sample_type)
+
+# Step 4: Join BRCA1 and BRCA2 events per patient/sample_type
+brca_combined <- all_patients_samples %>%
+  left_join(brca1_patients %>% rename(event_group_brca1 = event_group),
+            by = c("patient", "sample_type")) %>%
+  left_join(brca2_patients %>% rename(event_group_brca2 = event_group),
+            by = c("patient", "sample_type"))
+
+# Step 5: Assign gene_group and combined event_group per patient/sample_type
+brca_combined <- brca_combined %>%
+  mutate(
+    gene_group = case_when(
+      !is.na(event_group_brca1) & !is.na(event_group_brca2) ~ "BRCA1 + BRCA2",
+      !is.na(event_group_brca1) & is.na(event_group_brca2) ~ "BRCA1 only",
+      is.na(event_group_brca1) & !is.na(event_group_brca2) ~ "BRCA2 only",
+      TRUE ~ "No BRCA event"
+    ),
+    event_group = case_when(
+      gene_group == "No BRCA event" ~ "No event",
+      gene_group == "BRCA1 + BRCA2" ~ {
+        case_when(
+          event_group_brca1 == "SNV + CN" | event_group_brca2 == "SNV + CN" ~ "SNV + CN",
+          (event_group_brca1 == "SNV only" & event_group_brca2 == "CN only") |
+          (event_group_brca1 == "CN only" & event_group_brca2 == "SNV only") ~ "SNV + CN",
+          event_group_brca1 == "SNV only" & event_group_brca2 == "SNV only" ~ "SNV only",
+          event_group_brca1 == "CN only" & event_group_brca2 == "CN only" ~ "CN only",
+          TRUE ~ "SNV + CN"
+        )
+      },
+      gene_group == "BRCA1 only" ~ event_group_brca1,
+      gene_group == "BRCA2 only" ~ event_group_brca2,
+      TRUE ~ "No event"
+    )
+  ) %>%
+  select(patient, sample_type, gene_group, event_group)
+
+# Step 6: Count number of patients per group/sample_type/event
+full_event_counts <- brca_combined %>%
+  group_by(gene_group, sample_type, event_group) %>%
+  summarise(num_patients = n(), .groups = "drop")
+
+# Step 7: Manual adjustment for gDNA No event count to ensure total = 38
+gDNA_counts <- full_event_counts %>%
+  filter(sample_type == "gDNA" & gene_group != "No BRCA event")
+
+sum_gDNA_events <- sum(gDNA_counts$num_patients)
+
+# Calculate corrected No BRCA event for gDNA
+corrected_no_event_gDNA <- total_patients - sum_gDNA_events
+
+# Update the No BRCA event count for gDNA
+full_event_counts <- full_event_counts %>%
+  mutate(num_patients = ifelse(
+    gene_group == "No BRCA event" & sample_type == "gDNA",
+    corrected_no_event_gDNA,
+    num_patients
+  ))
+
+# Step 8: Factor levels for plotting
+full_event_counts$gene_group <- factor(
+  full_event_counts$gene_group,
+  levels = c("BRCA1 only", "BRCA2 only", "BRCA1 + BRCA2", "No BRCA event")
+)
+full_event_counts$sample_type <- factor(full_event_counts$sample_type, levels = c("gDNA", "Pre", "Post"))
+full_event_counts$event_group <- factor(full_event_counts$event_group,
+                                        levels = c("SNV only", "CN only", "SNV + CN", "No event"))
+
+# Step 9: Colors (grey for no event)
+final_colors <- c(
+  "SNV only" = "#1f77b4",
+  "CN only" = "#ff7f0e",
+  "SNV + CN" = "#2ca02c",
+  "No event" = "grey80"
+)
+
+# Step 10: Plot
+ggplot(full_event_counts, aes(x = sample_type, y = num_patients, fill = event_group)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~gene_group, nrow = 1) +
+  geom_text(aes(label = ifelse(num_patients > 0, num_patients, "")),
+            position = position_stack(vjust = 0.5), size = 4) +
+  scale_fill_manual(values = final_colors) +
+  labs(
+    title = "BRCA1/2 Events by Sample Type with No Event Counts (Adjusted gDNA)",
+    x = "Sample Type",
+    y = "Number of Patients",
+    fill = "Event Type"
+  ) +
+  theme_minimal(base_size = 14)
+
+# Optional: print to check
+print(full_event_counts)
+
+
+
+
+############

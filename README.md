@@ -91,8 +91,7 @@ or BRCA_complex when occurring on a shared SNV background
 This distinction enabled separation of pure CN restoration events from more complex BRCA evolutionary patterns.
 
 
-**4. Interpretation of SNV Events
-**
+**4. Interpretation of SNV Events**
 
 SNV dynamics were assessed longitudinally between pre-treatment and post-relapse samples.
 
@@ -108,8 +107,7 @@ Absolute variant allele frequency (VAF) increase >25%
 BRCA-specific SNV changes were prioritised as high-confidence adaptive resistance events due to their established association with PARPi resistance.
 
 
-**5. Identification of Resistance Events
-**
+**5. Identification of Resistance Events**
 
 Gene-level SNV and CN interpretations were merged to generate composite resistance events.
 
@@ -136,8 +134,7 @@ SNV with concurrent CN loss (CN ≤1)
 Multiple post-treatment SNVs within the same gene
 
 
-**6. Resistance Tier Assignment
-**
+**6. Resistance Tier Assignment**
 
 A hierarchical resistance tiering framework was implemented to prioritise biologically plausible resistance mechanisms.
 
@@ -187,8 +184,7 @@ Cases lacking convincing genomic resistance evidence were classified as:
 5.No_driver
 
 
-**7. Main Driver Assignment
-**
+**7. Main Driver Assignment**
 
 A custom hierarchical driver selection function was implemented to identify the dominant resistance-associated event per patient.
 
@@ -215,8 +211,7 @@ None
 depending on resistance tier and event type.
 
 
-**8. Pathway-Level Annotation
-**
+**8. Pathway-Level Annotation**
 
 Resistance-associated genes were mapped onto curated DNA repair and replication stress pathways including:
 
@@ -233,8 +228,7 @@ Pathway assignments were generated using all resistance-associated genes, includ
 This enabled pathway-level interpretation of adaptive resistance states.
 
 
-**9. Tumour Evolution Analysis
-**
+**9. Tumour Evolution Analysis**
 
 Longitudinal SNV evolution was characterised between pre-treatment and post-relapse samples.
 
@@ -257,8 +251,7 @@ Mixed
 No evidence of adaptation
 
 
-**10. SBS3 HRD Signature Integration
-**
+**10. SBS3 HRD Signature Integration**
 
 SBS3 mutational signature exposure was integrated to support HRD interpretation.
 
@@ -271,8 +264,7 @@ Non_HRD (<0.10)
 Both pre-treatment and post-relapse SBS3 states were retained in the final output.
 
 
-**11. Final Biological Resistance Classification
-**
+**11. Final Biological Resistance Classification**
 
 A final biologically informed classifier integrated:
 

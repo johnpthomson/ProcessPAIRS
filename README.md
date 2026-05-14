@@ -17,7 +17,9 @@ Pathway-level annotation
 Tumour evolutionary profiling
 Final biologically informed resistance classification
 
+
 **1. Input Data and Preprocessing**
+
 
 The pipeline integrated the following input datasets:
 
@@ -39,7 +41,9 @@ Copy-number values were standardised using a custom helper function (to_num_cn) 
 
 SNV burden per gene was calculated as the number of detected SNVs within each sample and gene combination.
 
+
 **2. Generation of Gene-Level HRD Event Matrices**
+
 
 For each patient and HRR-associated gene, SNV counts and CN states were aggregated separately for:
 
@@ -62,7 +66,9 @@ SNV x2
 CN=1
 SNV + CN=1
 
+
 **3. Interpretation of Copy-Number Events**
+
 
 Copy-number alterations were interpreted biologically using OncoKB annotations.
 
@@ -84,8 +90,10 @@ or BRCA_complex when occurring on a shared SNV background
 
 This distinction enabled separation of pure CN restoration events from more complex BRCA evolutionary patterns.
 
+
 **4. Interpretation of SNV Events
 **
+
 SNV dynamics were assessed longitudinally between pre-treatment and post-relapse samples.
 
 The following SNV event classes were defined:
@@ -99,8 +107,10 @@ Absolute variant allele frequency (VAF) increase >25%
 
 BRCA-specific SNV changes were prioritised as high-confidence adaptive resistance events due to their established association with PARPi resistance.
 
+
 **5. Identification of Resistance Events
 **
+
 Gene-level SNV and CN interpretations were merged to generate composite resistance events.
 
 Each event was annotated according to:
@@ -125,8 +135,10 @@ Biallelic HR disruption was inferred when any of the following criteria were met
 SNV with concurrent CN loss (CN ≤1)
 Multiple post-treatment SNVs within the same gene
 
+
 **6. Resistance Tier Assignment
 **
+
 A hierarchical resistance tiering framework was implemented to prioritise biologically plausible resistance mechanisms.
 
 Tier 1 — BRCA Reversion
@@ -174,8 +186,10 @@ Cases lacking convincing genomic resistance evidence were classified as:
 
 5.No_driver
 
+
 **7. Main Driver Assignment
 **
+
 A custom hierarchical driver selection function was implemented to identify the dominant resistance-associated event per patient.
 
 Drivers were selected according to:
@@ -200,8 +214,10 @@ None
 
 depending on resistance tier and event type.
 
+
 **8. Pathway-Level Annotation
 **
+
 Resistance-associated genes were mapped onto curated DNA repair and replication stress pathways including:
 
 Homologous recombination (HR)
@@ -216,8 +232,10 @@ Pathway assignments were generated using all resistance-associated genes, includ
 
 This enabled pathway-level interpretation of adaptive resistance states.
 
+
 **9. Tumour Evolution Analysis
 **
+
 Longitudinal SNV evolution was characterised between pre-treatment and post-relapse samples.
 
 Each SNV was classified as:
@@ -238,8 +256,10 @@ Adaptive
 Mixed
 No evidence of adaptation
 
+
 **10. SBS3 HRD Signature Integration
 **
+
 SBS3 mutational signature exposure was integrated to support HRD interpretation.
 
 Samples were classified as:
@@ -250,8 +270,10 @@ Non_HRD (<0.10)
 
 Both pre-treatment and post-relapse SBS3 states were retained in the final output.
 
+
 **11. Final Biological Resistance Classification
 **
+
 A final biologically informed classifier integrated:
 
 Resistance tier

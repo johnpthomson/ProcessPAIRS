@@ -1,8 +1,8 @@
 ####################################
-# ProcessPairs script v8-5
+# ProcessPairs script v4-5
 # John Thomson
-# 14-05-26
-#updated
+# 28-01-26
+#update inlcudes resistance tier 3.1 with complex BRCA cn events where a BRCA SNV lies in pre but the CN event in post is unusual thus not in 1.1 or 1.2 . Also update BRCA grouping into 4 groups.
 ####################################
 
 

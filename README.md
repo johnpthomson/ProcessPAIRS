@@ -1,291 +1,242 @@
 ![ProcessPAIRS Logo](logo.png)
 
 
-**Methods
-Overview**
-
-This analysis pipeline was developed to identify and classify homologous recombination deficiency (HRD)-associated genomic resistance mechanisms in paired tumour samples collected before and after PARP inhibitor (PARPi) exposure. The workflow integrates somatic single nucleotide variant (SNV) data, copy-number (CN) alterations, HRD-associated gene annotations, and SBS3 mutational signatures to infer biologically plausible resistance states and adaptive tumour evolution patterns.
-
-The analysis was implemented in R using custom scripts and included the following major stages:
-
+**Methods Overview (v10-1)**
+This analysis pipeline was developed to identify and classify homologous recombination deficiency (HRD)-associated genomic resistance mechanisms in paired tumour samples collected before and after PARP inhibitor (PARPi) exposure. The workflow integrates somatic single nucleotide variant (SNV) data (SNV-ID resolved), copy-number (CN) alterations, curated HRD gene annotations, and pathway-level biological priors to infer adaptive tumour evolution and resistance states.
+The analysis was implemented in R using custom scripts and includes the following major stages:
 Data loading and harmonisation
-HRR gene tier annotation
-SNV and CN event interpretation
+Resistance gene annotation integration
+SNV-ID resolved evolutionary reconstruction
+CN and SN event interpretation
 Resistance event detection
 Tiered resistance mechanism classification
+Driver event prioritisation
 Pathway-level annotation
 Tumour evolutionary profiling
 Final biologically informed resistance classification
-
-
+________________________________________
 **1. Input Data and Preprocessing**
-
-
-The pipeline integrated the following input datasets:
-
-Paired tumour SNV calls from pre-treatment and post-relapse samples
-Copy-number calls derived from matched tumour samples
-OncoKB gene annotations defining tumour suppressor genes (TSGs) and oncogenes
-Curated homologous recombination repair (HRR) gene lists
-SBS3 mutational signature exposures
-
-Genes were stratified into three predefined HRR tiers:
-
-Core HRR genes
-Modifier HRR genes
-Exploratory HRR-associated genes
-
-These were loaded from manually curated tab-delimited reference files.
-
-Copy-number values were standardised using a custom helper function (to_num_cn) in which missing or undefined values were treated as diploid (CN = 2).
-
-SNV burden per gene was calculated as the number of detected SNVs within each sample and gene combination.
-
-
+The pipeline integrates the following input datasets:
+•	Paired tumour SNV calls from pre-treatment and post-relapse samples (snv_sh) 
+•	Copy-number calls from matched tumour samples (merged) 
+•	Curated HRD / resistance gene annotation table (Gene_list_input_processpairs_v9-8.txt) 
+•	OncoKB gene annotations defining tumour suppressor genes (TSGs) and oncogenes 
+Genes were stratified into curated resistance-associated categories defined in the annotation table, including:
+•	HR bypass genes 
+•	Fork protection genes 
+•	BRCA restoration-associated genes 
+•	Replication stress and chromatin modifiers 
+Copy-number values were standardised using a custom helper function in which missing or undefined values were treated as diploid (CN = 2).
+SNV burden per gene was calculated per sample and aggregated across SNV slots (snv.id.1, snv.id.2) in the merged object.
+________________________________________
 **2. Generation of Gene-Level HRD Event Matrices**
-
-
-For each patient and HRR-associated gene, SNV counts and CN states were aggregated separately for:
-
-Germline DNA (gDNA)
-Pre-treatment tumour
-Post-relapse tumour
-
-These data were reshaped into wide-format matrices to allow direct temporal comparison of genomic states across treatment timepoints.
-
-Each gene-timepoint combination was represented as a simplified event status string including:
-
-SNV presence
-SNV multiplicity
-CN deviation from diploid state
-
-Examples included:
-
-SNV
-SNV x2
-CN=1
-SNV + CN=1
-
-
+For each patient and resistance-associated gene, SNV counts and CN states were aggregated across:
+•	gDNA (germline) 
+•	Pre-treatment tumour 
+•	Post-relapse tumour 
+These data were reshaped into a long-format matrix (hrd_long) enabling direct temporal comparison of genomic states across treatment.
+Each gene-timepoint combination is represented by:
+•	CN state (diploid-normalised) 
+•	SNV count per timepoint 
+•	Resistance gene annotations (pathway, mechanism, classifier group) 
+________________________________________
 **3. Interpretation of Copy-Number Events**
+Copy-number alterations were interpreted using curated directional rules defined in the annotation file.
+For loss-directed genes:
+•	CN reduction from pre- to post-treatment → CN_LOSS 
+For gain-directed genes:
+•	CN increase from pre- to post-treatment → CN_GAIN 
+Unannotated or ambiguous genes were excluded from directional inference.
+BRCA1/2 CN alterations were treated separately within downstream BRCA context classification.
+________________________________________
+**4. Interpretation of SNV Events (Gene-Level)**
+SNV dynamics were interpreted using gene-level longitudinal comparisons:
+•	Pre-treatment SNV count 
+•	Post-relapse SNV count 
+SNV interpretations include:
+•	POST_ACQUIRED_PATHOGENIC: 
+o	Emergence of SNVs post-treatment 
+o	Expansion in SNV burden 
+•	SECONDARY_REVERSION: 
+o	Emergence or expansion of putative reversion-associated SNVs 
+Optional VAF expansion criteria were included in annotation logic but not required for classification.
+________________________________________
+**5. SNV-ID Resolved Evolutionary Reconstruction (Key Update v10-1)**
+A major update in this version introduces SNV-ID resolved evolutionary tracking using the full SNV catalogue (snv_sh).
+5.1 SNV catalogue construction
+SNVs were parsed from:
+•	gene 
+•	snv_id 
+•	patient 
+•	sample type (gDNA / Pre / Post) 
+This creates a master SNV catalogue ensuring variant-level resolution.
+5.2 Presence/absence matrix
+Each SNV-ID was encoded as binary presence across:
+•	Pre-treatment 
+•	Post-relapse 
+5.3 SNV evolutionary states
+Each SNV-ID was classified as:
+•	Acquired: absent Pre → present Post 
+•	Lost: present Pre → absent Post 
+•	Shared: present in both Pre and Post 
+5.4 Gene-level aggregation
+SNV-ID level states were collapsed to gene-level summaries including:
+•	gene lists per evolutionary class 
+•	number of SNVs per class 
+•	SNV-ID counts (primary quantitative measure) 
+5.5 Patient-level summaries
+Two outputs were generated:
+•	Tumor_Evolution: SNV state counts per patient 
+•	SNV_Gene_Evolution: gene-level breakdown of SNV state classes 
+This ensures evolutionary inference is driven by variant-level dynamics rather than gene-level aggregation bias.
+________________________________________
+**6. Identification of Resistance Events**
+Gene-level SNV and CN interpretations were merged into composite resistance events.
+Each event is annotated according to:
+•	Gene identity 
+•	SNV event type 
+•	CN event type 
+•	HRD gene classification 
+•	Pathway membership 
+Only genes with at least one SNV or CN event in the resistance gene set are considered.
+________________________________________
+**7. Driver Event Scoring System**
+A quantitative driver scoring framework ranks resistance-associated events.
+Scoring prioritises:
+•	BRCA restoration and reversion events (highest score) 
+•	HR bypass and fork protection mechanisms (intermediate score) 
+•	chromatin and replication stress modifiers (lower score) 
+•	complex multi-pathway events (lowest structured score tier) 
+Each gene-event pair receives a driver score used for ranking patient-level dominant events.
+________________________________________
+**8. Patient-Level Resistance Aggregation**
+For each patient, resistance features are aggregated into:
+•	Full resistance report string 
+•	Presence of: 
+o	BRCA restoration events 
+o	HR bypass events 
+o	Fork protection events 
+o	Drug target adaptation events 
+o	Complex multi-mechanism states 
+Complexity metrics include:
+•	total driver events 
+•	number of unique driver genes 
+•	diversity of event types 
+________________________________________
+**9. Resistance Tier Assignment**
+A hierarchical classification framework assigns each patient to a resistance tier:
+Tier 1 — BRCA-associated adaptive restoration
+Includes:
+•	BRCA SNV acquisition 
+•	BRCA reversion-like events 
+•	CN-associated BRCA restoration 
+Tier 2a — HR bypass
+Includes replication stress adaptation and HR pathway rewiring
+Tier 2b — Fork protection
+Includes Shieldin-axis and replication fork stability mechanisms
+Tier 2c — Drug target adaptation
+Includes PARP axis and drug-response pathway changes
+Tier 3 — Complex adaptive genomic state
+Defined by:
+•	multiple concurrent resistance mechanisms 
+•	high driver diversity 
+•	mixed event classes 
+Tier 4 — No clear genomic resistance mechanism
+________________________________________
+**10. Biological Override Rules**
+Post-classification biological sanity checks enforce known pathway biology:
+•	TP53BP1 / FANCA / FANCD2 → forced fork protection assignment 
+•	PARP pathway and drug response genes → forced drug target adaptation (unless overridden by fork protection) 
+•	BRCA-associated adaptive restoration is never overridden 
+These rules ensure canonical biological interpretation is preserved.
+________________________________________
+**11. Main Driver Assignment**
+A single dominant resistance event per patient is selected using:
+•	highest driver score 
+•	biological hierarchy 
+•	event coherence 
+Outputs include:
+•	main driver gene 
+•	associated mechanism 
+•	classifier group 
+•	driver score 
+________________________________________
+**12. Pathway-Level Annotation**
+All resistance-associated genes are mapped to curated pathways:
+•	Homologous recombination (HR) 
+•	Fanconi anaemia (FA) 
+•	NHEJ / Shieldin axis 
+•	PARP signalling axis 
+•	Alternative end joining (Alt-EJ / POLQ) 
+•	Replication stress response 
+•	Chromatin and DNA repair modifiers 
+Both SNV- and CN-driven events contribute to pathway enrichment.
+________________________________________
+**13. Tumour Evolution Analysis**
+SNV evolution is quantified across timepoints using SNV-ID resolved states:
+•	Acquired 
+•	Lost 
+•	Shared 
+Patient-level summaries quantify event counts per category.
+Genomic directionality is inferred as:
+•	Adaptive (dominant resistance evolution) 
+•	Mixed (multiple competing processes) 
+•	Emergent (limited or early events) 
+•	No evidence of adaptation 
+________________________________________
+**14. Final Biological Resistance Classification**
+A unified classifier integrates:
+•	resistance tier 
+•	driver event structure 
+•	pathway involvement 
+•	BRCA restoration status 
+•	evolutionary complexity 
+Final classes:
+Class	Interpretation
+1.BRCA_associated_adaptive_restoration	BRCA restoration or adaptive reversion
+2a.HR_bypass	HR pathway bypass / replication stress adaptation
+2b.Fork_protection	Fork protection / Shieldin-axis resistance
+3.Complex_adaptive_genomic_state	Mixed adaptive evolution
+4.No_clear_genomic_resistance	No convincing mechanism
+Post-hoc biological checks ensure canonical pathway assignments remain consistent with known resistance biology.
+________________________________________
+
+**Key Update in v10-1**
+This version represents a substantial redesign of the resistance interpretation framework, with two major conceptual updates in how genomic events are defined and prioritised.
+
+**1. Integration of curated, peer-reviewed resistance priors**
+The pipeline now directly incorporates a manually curated and externally informed resistance annotation table (Gene_list_input_processpairs_v9-8.txt), which encodes prior biological knowledge for each gene, including:
+•	CN directionality rules (GAIN / LOSS / UNCLEAR) 
+•	SNV functional axis (POST_ACQUIRED_PATHOGENIC vs SECONDARY_REVERSION) 
+•	Pathway membership 
+•	Mechanism classification 
+•	High-level classifier grouping (e.g. HR bypass, fork protection, BRCA restoration) 
+This represents a shift from purely data-driven event calling to a hybrid inference model, where:
+genomic observations are explicitly interpreted through a biologically pre-defined resistance framework
+As a result, gene-level SNV and CN events are no longer interpreted in isolation, but are contextualised within curated, peer-reviewed resistance biology.
+________________________________________
+**2. Explicit BRCA ORF restoration module**
+A dedicated BRCA structural rescue module has been introduced to capture frameshift-driven functional restoration events that are not detectable through SNV or CNV annotation alone.
+This module:
+•	Extracts frameshift protein annotations (e.g. fs*21) 
+•	Sums cumulative frameshift length across variants per gene 
+•	Evaluates reading-frame preservation using modulo-3 logic: 
+total frameshift length % 3 == 0 → putative ORF restoration
+This enables detection of:
+•	cryptic BRCA1/2 reactivation events 
+•	compound frameshift rescues 
+•	structural restoration despite persistent SNV burden 
+Importantly, BRCA ORF restoration is then used as a hierarchical override feature in downstream classification, ensuring that:
+structural reversion signals take priority over aggregate SNV burden or CN state changes when defining BRCA-associated adaptive resistance
+________________________________________
+**3. Conceptual impact on resistance modelling**
+Together, these updates shift the framework from:
+•	purely observational genomic comparison
+to 
+•	biologically constrained, annotation-driven resistance inference 
+Specifically:
+•	Gene behaviour is now interpreted through curated resistance priors (not post-hoc clustering) 
+•	BRCA biology is extended beyond SNV/CN state into functional protein restoration space 
+•	Resistance tiers are therefore anchored to mechanistic interpretation rather than purely statistical recurrence 
 
 
-Copy-number alterations were interpreted biologically using OncoKB annotations.
-
-For tumour suppressor genes (TSGs):
-
-Reduction in CN from pre- to post-treatment was classified as TSG copy-number loss
-Restoration from deleted states toward diploid levels was classified as TSG copy-number restoration
-
-For oncogenes:
-
-Increased CN post-treatment was classified as oncogene gain
-Reduction of previously amplified states was classified as oncogene restoration
-
-Special handling was implemented for BRCA1 and BRCA2:
-
-Restoration from subclonal loss states toward diploid or amplified states was classified as:
-BRCA_CN_restored
-or BRCA_complex when occurring on a shared SNV background
-
-This distinction enabled separation of pure CN restoration events from more complex BRCA evolutionary patterns.
-
-
-**4. Interpretation of SNV Events**
-
-SNV dynamics were assessed longitudinally between pre-treatment and post-relapse samples.
-
-The following SNV event classes were defined:
-
-SNV acquisition
-Emergence of new SNVs post-treatment
-BRCA SNV acquisition
-Emergence or expansion of BRCA1/2 mutations
-SNV VAF increase
-Absolute variant allele frequency (VAF) increase >25%
-
-BRCA-specific SNV changes were prioritised as high-confidence adaptive resistance events due to their established association with PARPi resistance.
-
-
-**5. Identification of Resistance Events**
-
-Gene-level SNV and CN interpretations were merged to generate composite resistance events.
-
-Each event was annotated according to:
-
-Gene identity
-SNV event type
-CN event type
-HRR tier membership
-BRCA involvement
-
-Patient-level resistance summaries were generated by concatenating all detected resistance-associated genomic events.
-
-Additional flags included:
-
-Presence of BRCA restoration events
-Presence of BRCA SNV reversions
-Presence of core/modifier/exploratory HRR alterations
-Presence of biallelic HR events
-
-Biallelic HR disruption was inferred when any of the following criteria were met:
-
-SNV with concurrent CN loss (CN ≤1)
-Multiple post-treatment SNVs within the same gene
-
-
-**6. Resistance Tier Assignment**
-
-A hierarchical resistance tiering framework was implemented to prioritise biologically plausible resistance mechanisms.
-
-Tier 1 — BRCA Reversion
-
-High-confidence BRCA restoration mechanisms including:
-
-BRCA SNV acquisition
-BRCA VAF expansion
-BRCA restoration-associated events
-
-These were considered the strongest evidence of adaptive PARPi resistance.
-
-Tier 2 — Post-treatment SNV Drivers
-
-Post-treatment emergent SNV events were classified according to HRR gene tier:
-
-2.1.Core_post_SNV
-2.2.Modifier_post_SNV
-2.3.Exploratory_post_SNV
-
-These represent putative adaptive bypass mechanisms emerging during treatment.
-
-Tier 3 — Copy-Number Driver Events
-
-Non-BRCA CN alterations were classified by HRR tier:
-
-3.1.Core_CN_event
-3.2.Modifier_CN_event
-3.3.Exploratory_CN_event
-
-These included:
-
-TSG deletions
-Oncogene amplifications
-Copy-number restoration events
-Tier 4 — BRCA Copy-Number Restoration States
-
-BRCA CN restoration events without clear SNV reversion were subclassified as:
-
-4.1.BRCA_CN_restore_no_shared_SNV
-4.2.BRCA_complex
-Tier 5 — No Driver
-
-Cases lacking convincing genomic resistance evidence were classified as:
-
-5.No_driver
-
-
-**7. Main Driver Assignment**
-
-A custom hierarchical driver selection function was implemented to identify the dominant resistance-associated event per patient.
-
-Drivers were selected according to:
-
-Resistance tier priority
-HRR gene tier hierarchy
-Biological relevance
-
-Examples included:
-
-BRCA1: (BRCA_SNV_acquired)
-TP53BP1: CN_loss
-ATR: (SNV_acquired)
-
-Driver confidence was assigned qualitatively as:
-
-High
-Moderate
-Low-moderate
-Low
-None
-
-depending on resistance tier and event type.
-
-
-**8. Pathway-Level Annotation**
-
-Resistance-associated genes were mapped onto curated DNA repair and replication stress pathways including:
-
-Homologous recombination (HR)
-Fanconi anaemia (FA)
-NHEJ/Shieldin
-PARP pathway
-Alternative end joining (Alt-EJ/PolQ)
-Replication stress response
-Chromatin/remodelling repair modifiers
-
-Pathway assignments were generated using all resistance-associated genes, including both SNV-driven and CN-driven events.
-
-This enabled pathway-level interpretation of adaptive resistance states.
-
-
-**9. Tumour Evolution Analysis**
-
-Longitudinal SNV evolution was characterised between pre-treatment and post-relapse samples.
-
-Each SNV was classified as:
-
-Acquired
-Lost
-Stable
-VAF increased
-VAF decreased
-
-Patient-level summaries quantified the number of events in each category.
-
-Gene-level summaries of evolutionary changes were also generated.
-
-Genomic directionality was inferred using resistance and evolutionary features and classified as:
-
-Adaptive
-Mixed
-No evidence of adaptation
-
-
-**10. SBS3 HRD Signature Integration**
-
-SBS3 mutational signature exposure was integrated to support HRD interpretation.
-
-Samples were classified as:
-
-HRD (SBS3 ≥ 0.20)
-Low_conf_HRD (0.10–0.19)
-Non_HRD (<0.10)
-
-Both pre-treatment and post-relapse SBS3 states were retained in the final output.
-
-
-**11. Final Biological Resistance Classification**
-
-A final biologically informed classifier integrated:
-
-Resistance tier
-Main driver event
-Pathway involvement
-Adaptive complexity metrics
-BRCA restoration status
-
-Patients were assigned to one of four major resistance states:
-
-Final Classifier	Biological Interpretation
-1.BRCA_associated_adaptive_restoration	BRCA restoration or BRCA-associated adaptive resistance
-2a.HR_bypass	HR pathway bypass or replication stress adaptation
-2b.Fork_protection	Fork protection / Shieldin-axis associated resistance
-3.Complex_adaptive_genomic_state	Mixed adaptive genomic evolution
-4.No_clear_genomic_resistance	No convincing genomic resistance mechanism
-
-A final post-hoc biological sanity check was applied to reclassify cases based on dominant driver genes. For example:
-
-TP53BP1, RIF1, REV7, and Shieldin-axis genes were forced into fork protection-associated states
-ATR/ATM/CHEK pathway alterations were preferentially assigned to HR bypass states
-
-This ensured that biologically canonical resistance mechanisms were prioritised over broader pathway aggregation effects.

@@ -241,8 +241,9 @@ genomic observations are explicitly interpreted through a biologically pre-defin
 As a result, gene-level SNV and CN events are no longer interpreted in isolation, but are contextualised within curated, peer-reviewed resistance biology.
 ________________________________________
 **2. Explicit BRCA ORF restoration module**
-A dedicated BRCA structural rescue module has been introduced to capture frameshift-driven functional restoration events that are not detectable through SNV or CNV annotation alone.
+A dedicated BRCA structural restoration module has been introduced to predict orf restoration in cases with secondary mutation. 
 This module:
+• Operates only where second POST only SNV event occurs downstream of original SNV event seen in both PRE and POST. 
 •	Extracts frameshift protein annotations (e.g. fs*21) 
 •	Sums cumulative frameshift length across variants per gene 
 •	Evaluates reading-frame preservation using modulo-3 logic: 

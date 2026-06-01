@@ -313,13 +313,6 @@ final_classifier
 resistance_mechanism
 main_driver
 
-**4. BRCA mechanism-aware driver relabelling**
-Added mechanism-aware main driver relabelling for BRCA-associated adaptive resistance states.
-Cases containing secondary BRCA alterations without ORF rescue evidence are now automatically assigned:
-BRCA_secondary_mutation_event
-instead of:
-BRCA_reversion
-Prevents overcalling of functional BRCA restoration in structurally unsupported cases.
 
 
 

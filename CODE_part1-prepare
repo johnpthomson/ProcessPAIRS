@@ -12,9 +12,10 @@ library(stringr)
 library(ggplot2)
 
 # --- Load data ---
-setwd("C:/Users/jthoms24/Documents/John_work/PAIRS/Analysis/Summary49")
-snv_sh <- read.delim("snv_sh.txt", stringsAsFactors = FALSE)
-cn_sh <- read.delim("cn_sh.txt", stringsAsFactors = FALSE)
+setwd("C:/Users/jthoms24/Documents/John_work/PAIRS/Analysis/Summary53")
+snv_sh <- read.delim("snv_sh_pre.txt", stringsAsFactors = FALSE)
+cn_sh <- read.delim("cn_sh_pre.txt", stringsAsFactors = FALSE)
+#NB 408B > 408 in both snv and cn!
 
 
 # --- Clean CN column names ---

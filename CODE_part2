@@ -565,7 +565,7 @@ hrd_status_wide <- hrd_long %>%
 
       str_detect(
         resistance_report,
-        "TP53BP1|FANCA|FANCD2"
+        "TP53BP1|MAD2L2|REV7|RIF1|SHLD1|SHLD2|SHLD3"
       ) ~
         "2b.Fork_protection",
 
@@ -576,7 +576,7 @@ hrd_status_wide <- hrd_long %>%
 
       str_detect(
         resistance_report,
-        "ABCB1|ABCG2|PARG|PARP1|PARP2"
+        "PARG|PARP1|PARP2"
       ) &
       resistance_tier !=
         "2b.Fork_protection" ~
@@ -620,30 +620,101 @@ hrd_status_wide <- hrd_long %>%
     )
   )
   
-  
-  
+
 # ======================================================
 # MAIN DRIVER EVENT
-# Highest scoring biological event
+# Biological override-aware driver selection
 # ======================================================
 
-main_driver_table <- driver_events %>%
+# ------------------------------------------------------
+# Add biologically prioritised override score
+# ------------------------------------------------------
 
+driver_events_ranked <- driver_events %>%
+  
+  mutate(
+    
+    override_driver_score = case_when(
+      
+      # ------------------------------------------------
+      # TRUE BRCA reversions / ORF restoration
+      # strongest biological evidence
+      # ------------------------------------------------
+      
+      true_brca_reversion ~ 1000,
+      
+      # ------------------------------------------------
+      # BRCA restoration CN events ONLY
+      # supportive biology but should NOT dominate
+      # over canonical resistance drivers
+      # ------------------------------------------------
+      
+      gene %in% c("BRCA1", "BRCA2") &
+        str_detect(event_string, "CN_GAIN") &
+        !str_detect(event_string, "SECONDARY_REVERSION") ~ 150,
+      
+      # ------------------------------------------------
+      # Canonical fork protection genes only
+      # (Shieldin / fork stabilisation axis)
+      # ------------------------------------------------
+      
+      gene %in% c(
+        "TP53BP1",
+        "MAD2L2",
+        "REV7",
+        "RIF1",
+        "SHLD1",
+        "SHLD2",
+        "SHLD3"
+      ) ~ 900,
+      
+      # ------------------------------------------------
+      # Drug adaptation genes
+      # ------------------------------------------------
+      
+      gene %in% c(
+        "PARP1",
+        "PARP2",
+        "PARG"
+      ) ~ 800,
+      
+      # ------------------------------------------------
+      # HR bypass / replication stress adaptation
+      # ------------------------------------------------
+      
+      classifier_group == "2a.HR_bypass" ~ 700,
+      
+      # ------------------------------------------------
+      # Complex adaptive biology
+      # ------------------------------------------------
+      
+      classifier_group == "3.Complex" ~ 200,
+      
+      TRUE ~ driver_score
+    )
+  )
+# ------------------------------------------------------
+# Select dominant biological driver
+# ------------------------------------------------------
+
+main_driver_table <- driver_events_ranked %>%
+  
   arrange(
     patient,
+    desc(override_driver_score),
     desc(driver_score)
   ) %>%
-
+  
   group_by(patient) %>%
-
+  
   slice(1) %>%
-
+  
   ungroup() %>%
-
+  
   transmute(
-
+    
     patient,
-
+    
     main_driver =
       paste0(
         gene,
@@ -651,18 +722,22 @@ main_driver_table <- driver_events %>%
         event_string,
         "]"
       ),
-
+    
     main_driver_mechanism = mechanism,
-
+    
     main_driver_group = classifier_group,
-
-    driver_score
+    
+    driver_score = override_driver_score
   )
 
+# ------------------------------------------------------
+# Merge into patient summary
+# ------------------------------------------------------
+
 hrd_status_wide <- hrd_status_wide %>%
-  left_join(main_driver_table, by = "patient")
+  left_join(main_driver_table, by = "patient")  
   
-  
+
   
 ####################################################################################
 
@@ -1139,6 +1214,54 @@ hrd_status_wide <- hrd_status_wide %>%
   left_join(snv_evolution_summary, by = "patient")
 
 
+
+
+# ======================================================
+# Refine BRCA secondary event terminology
+# Only TRUE ORF restorations retain
+# "SECONDARY_REVERSION"
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+  
+  mutate(
+    
+    # --------------------------------------------------
+    # Update main driver text
+    # --------------------------------------------------
+    
+    main_driver = case_when(
+      
+      final_classifier == "1.BRCA_associated_adaptive_restoration" &
+        BRCA_orf_restore == "N" ~
+        str_replace(
+          main_driver,
+          "SECONDARY_REVERSION",
+          "SECONDARY_MUTATION"
+        ),
+      
+      TRUE ~ main_driver
+    ),
+    
+    # --------------------------------------------------
+    # Update mechanism label
+    # --------------------------------------------------
+    
+    main_driver_mechanism = case_when(
+      
+      final_classifier == "1.BRCA_associated_adaptive_restoration" &
+        BRCA_orf_restore == "N" &
+        str_detect(main_driver, "SECONDARY_MUTATION") ~
+        "BRCA_secondary_mutation_event",
+      
+      TRUE ~ main_driver_mechanism
+    )
+  )
+
+
+
+
+
 # ======================================================
 # FINAL OUTPUT TABLE
 # ======================================================
@@ -1157,15 +1280,9 @@ final_out <- hrd_status_wide %>%
 
     resistance_report,
 
-    resistance_tier,
-
-    resistance_mechanism,
-
     main_driver,
 
     main_driver_mechanism,
-
-    main_driver_group,
 
     total_driver_events,
 
@@ -1185,6 +1302,40 @@ final_out <- hrd_status_wide %>%
   distinct()
   
   
+
+# ======================================================
+# OPTIONAL PATIENT EXCLUSIONS
+# Load exclude.txt and remove patients before output
+# ======================================================
+
+exclude_ids <- read.delim(
+  "exclude.txt",
+  header = TRUE,
+  stringsAsFactors = FALSE
+)
+
+# Clean IDs
+exclude_ids <- exclude_ids %>%
+  mutate(patient = trimws(patient))
+
+# Vector of excluded patients
+exclude_patients <- unique(exclude_ids$patient)
+
+# ------------------------------------------------------
+# Remove excluded patients from final tables
+# ------------------------------------------------------
+
+driver_events <- driver_events %>%
+  filter(!patient %in% exclude_patients)
+
+hrd_status_wide <- hrd_status_wide %>%
+  filter(!patient %in% exclude_patients)
+
+final_out <- final_out %>%
+  filter(!patient %in% exclude_patients)
+
+
+
   
 #############################
 #OUTPUTS

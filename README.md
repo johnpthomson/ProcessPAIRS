@@ -183,8 +183,29 @@ Genomic directionality is inferred as:
 •	Mixed (multiple competing processes) 
 •	Emergent (limited or early events) 
 •	No evidence of adaptation 
+
 ________________________________________
-**14. Final Biological Resistance Classification**
+**14. BRCA ORF Analysis**
+This module:
+•	Extracts frameshift protein annotations (e.g. fs*21) 
+•	Sums cumulative frameshift length across variants per gene 
+•	Evaluates reading-frame preservation using modulo-3 logic: 
+total frameshift length % 3 == 0 → putative ORF restoration
+This enables detection of:
+•	cryptic BRCA1/2 reactivation events 
+•	compound frameshift rescues 
+•	structural restoration despite persistent SNV burden 
+Importantly, BRCA ORF restoration is then used as a hierarchical override feature in downstream classification, ensuring that:
+structural reversion signals take priority over aggregate SNV burden or CN state changes when defining BRCA-associated adaptive resistance
+•	coded as either BRCA_restoration or BRCA_secondary_mutation_event
+
+
+________________________________________
+**15. external cohort exclusion**
+•	Load in exclude.txt with patient IDs intending to remove from analysis. Patients listed in this file are removed immediately prior to final output table generation.
+
+________________________________________
+**16. Final Biological Resistance Classification**
 A unified classifier integrates:
 •	resistance tier 
 •	driver event structure 
@@ -199,10 +220,14 @@ Class	Interpretation
 3.Complex_adaptive_genomic_state	Mixed adaptive evolution
 4.No_clear_genomic_resistance	No convincing mechanism
 Post-hoc biological checks ensure canonical pathway assignments remain consistent with known resistance biology.
+
+________________________________________
+**CODE HISTORY AND RECENT UPDATES**
 ________________________________________
 
+
 **Key Update in v10-1**
-This version represents a substantial redesign of the resistance interpretation framework, with two major conceptual updates in how genomic events are defined and prioritised.
+This version represents a substantial redesign of the resistance interpretation framework, with major conceptual updates in how genomic events are defined and prioritised. Major change in the input data parsing tables which drive the model logic, complete rebuild of logic based on table loading and BRCA ORF modelling.  
 
 **1. Integration of curated, peer-reviewed resistance priors**
 The pipeline now directly incorporates a manually curated and externally informed resistance annotation table (Gene_list_input_processpairs_v9-8.txt), which encodes prior biological knowledge for each gene, including:
@@ -238,5 +263,67 @@ Specifically:
 •	Gene behaviour is now interpreted through curated resistance priors (not post-hoc clustering) 
 •	BRCA biology is extended beyond SNV/CN state into functional protein restoration space 
 •	Resistance tiers are therefore anchored to mechanistic interpretation rather than purely statistical recurrence 
+
+
+________________________________________
+**Key Updates in v10-2**
+This version introduced exclusion table load ins to parse patient IDs for cohort curation.
+
+**Added support for external cohort exclusion using exclude.txt.**
+Patients listed in this file are removed immediately prior to final output table generation.
+Enables:
+QC-driven exclusions
+reproducible cohort curation
+
+________________________________________
+**Key Updates in v10-3**
+This version substantially refines the biologically informed resistance attribution framework through hierarchical driver override prioritisation, ORF-aware BRCA restoration interpretation, mechanism-aware main driver reassignment, expanded canonical fork protection logic, and improved harmonisation between genomic events, resistance mechanisms, and final adaptive resistance state classification.
+
+**1. Biological driver override framework refined**
+Refined biologically informed driver override hierarchy to improve concordance between final_classifier, resistance_mechanism, and main_driver.
+Added hierarchical prioritisation of:
+canonical fork protection genes
+PARP adaptation genes
+HR bypass drivers
+validated BRCA restoration events
+Prevents biologically weaker events from incorrectly dominating final driver assignment when stronger mechanistic resistance signals coexist.
+
+**2. BRCA restoration interpretation updated**
+Added stricter BRCA restoration interpretation logic such that:
+SECONDARY_REVERSION is only assigned when ORF restoration evidence is present (BRCA_orf_restore == "Y")
+non-restorative secondary BRCA events are reclassified as:
+SECONDARY_MUTATION
+Improves separation of:
+probable functional BRCA rescue events
+secondary BRCA alterations lacking evidence of restored protein function.
+
+**3. Main driver selection aligned to biological resistance states**
+Updated main driver assignment rules to prevent isolated BRCA CN gain events from dominating non-BRCA resistance states.
+Ensures fork protection states preferentially select:
+TP53BP1
+MAD2L2
+Shieldin-axis genes
+Ensures drug adaptation states preferentially select:
+PARP1
+PARP2
+PARG
+Improves biological consistency between:
+final_classifier
+resistance_mechanism
+main_driver
+
+**4. BRCA mechanism-aware driver relabelling**
+Added mechanism-aware main driver relabelling for BRCA-associated adaptive resistance states.
+Cases containing secondary BRCA alterations without ORF rescue evidence are now automatically assigned:
+BRCA_secondary_mutation_event
+instead of:
+BRCA_reversion
+Prevents overcalling of functional BRCA restoration in structurally unsupported cases.
+
+
+
+
+
+
 
 

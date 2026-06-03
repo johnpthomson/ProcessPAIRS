@@ -199,16 +199,34 @@ Importantly, BRCA ORF restoration is then used as a hierarchical override featur
 structural reversion signals take priority over aggregate SNV burden or CN state changes when defining BRCA-associated adaptive resistance
 •	coded as either BRCA_restoration or BRCA_secondary_mutation_event
 
+________________________________________
+**15. PRE and POST SNV count and GOI list**
+This module:
+• Identifies genes of interest (GOIs) from the curated resistance panel harbouring SNVs in the Pre- and Post-treatment samples
+• Counts the number of unique resistance-associated genes with SNV events in each sample
+• Generates compact patient-level summaries in the format:
+2; ATM, BRCA1
+This enables detection of:
+• Baseline resistance-associated mutational burden
+• Emergence of new resistance-gene SNVs at relapse
+• Persistence or loss of resistance-associated mutations across treatment
+• Expansion of HRD and PARPi resistance pathway alterations over time
+Summaries are restricted to the curated resistance gene panel txt file, providing a biologically focused measure of resistance evolution rather than a genome-wide SNV count.
+Outputs:
+• PRE_SNV_SUMMARY = SNV count and gene list for Pre-treatment samples
+• POST_SNV_SUMMARY = SNV count and gene list for Post-relapse samples
 
 ________________________________________
-**15. external cohort exclusion**
+**16. external cohort exclusion**
 •	Load in exclude.txt with patient IDs intending to remove from analysis. Patients listed in this file are removed immediately prior to final output table generation.
 
 ________________________________________
-**16. Final Biological Resistance Classification**
+**17. Final Biological Resistance Classification**
 A unified classifier integrates:
-•	resistance tier 
-•	driver event structure 
+•	resistance tier
+•	PRE tumour genomic states
+•	POST tumour genomic states
+•	POST sample resistance driver event structure 
 •	pathway involvement 
 •	BRCA restoration status 
 •	evolutionary complexity 
@@ -314,7 +332,9 @@ resistance_mechanism
 main_driver
 
 
-
+________________________________________
+**Key Updates in v10-7**
+This version classifies BRCA_CN status in relapse and also summarises PRE and POST pathogenic and likely pathogenic SNV counts and names.
 
 
 

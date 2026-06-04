@@ -1,13 +1,13 @@
 ![ProcessPAIRS Logo](logo.png)
 
 
-**Methods Overview (v10-3: June 1st 2026)**
+**Methods Overview (v10-8: June 4th 2026)**
 This analysis pipeline was developed to identify and classify homologous recombination deficiency (HRD)-associated genomic resistance mechanisms in paired tumour samples collected before and after PARP inhibitor (PARPi) exposure. The workflow integrates somatic single nucleotide variant (SNV) data (SNV-ID resolved), copy-number (CN) alterations, curated HRD gene annotations, and pathway-level biological priors to infer adaptive tumour evolution and resistance states.
 The analysis was implemented in R using custom scripts and includes the following major stages:
 Data loading and harmonisation
 Resistance gene annotation integration
 SNV-ID resolved evolutionary reconstruction
-CN and SN event interpretation
+CN and SN event interpretation (PRE and POST)
 Resistance event detection
 Tiered resistance mechanism classification
 Driver event prioritisation
@@ -337,7 +337,9 @@ ________________________________________
 This version classifies BRCA_CN status in relapse and also summarises PRE and POST pathogenic and likely pathogenic SNV counts and names.
 
 
-
+________________________________________
+**Key Updates in v10-8**
+This version adds a column for PRE CN status over 5 genes of interest, BRCA1,BRCA2,TP53BP1,CCNE1 and MYC.
 
 
 

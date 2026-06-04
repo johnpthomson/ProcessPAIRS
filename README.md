@@ -240,7 +240,7 @@ Class	Interpretation
 Post-hoc biological checks ensure canonical pathway assignments remain consistent with known resistance biology.
 
 
-![ProcessPAIRSworkflow](ProcessPAIRS v10-7 workflow diagram.png)
+![ProcessPAIRS workflow diagram](ProcessPAIRS%20v10-7%20workflow%20diagram.png)
 
 ________________________________________
 **CODE HISTORY AND RECENT UPDATES**

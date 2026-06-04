@@ -1,6 +1,6 @@
 
 # ======================================================
-# HRD & Resistance Tier Analysis - End-to-End Script v10-7
+# HRD & Resistance Tier Analysis - End-to-End Script v10-8
 # ======================================================
 setwd("C:/Users/jthoms24/Documents/John_work/PAIRS/Analysis/Summary53")
 library(dplyr)
@@ -17,7 +17,7 @@ if (!"Oncokb" %in% colnames(onco)) stop("Expected an 'Oncokb' column in the Onco
 # ======================================================
 
 gene_rules <- read.delim(
-  "Gene_list_input_processpairs_v9-8.txt",
+  "Gene_list_input_processpairs_v10-7.txt",
   stringsAsFactors = FALSE,
   sep = "\t"
 )
@@ -1444,6 +1444,70 @@ hrd_status_wide <- hrd_status_wide %>%
   )
 
 
+
+
+
+# ======================================================
+# PRE CN GOI SUMMARY
+# GOI CN events only
+# ======================================================
+
+goi_cn <- c(
+  "BRCA1",
+  "BRCA2",
+  "TP53BP1",
+  "CCNE1",
+  "MYC"
+)
+
+hrd_status_wide <- hrd_status_wide %>%
+
+  rowwise() %>%
+
+  mutate(
+
+    PRE_CN_GOI_SUMMARY = {
+
+      if (is.na(PRE_STATE) || PRE_STATE == ".") {
+
+        "."
+
+      } else {
+
+        events <- strsplit(PRE_STATE, "; ")[[1]]
+
+        cn_events <- events %>%
+
+          .[str_detect(., "CN_GAIN|CN_LOSS")] %>%
+
+          purrr::map_chr(function(x) {
+
+            gene <- str_extract(x, "^[^:]+")
+
+            cn <- str_extract(x, "CN_GAIN|CN_LOSS")
+
+            paste0(gene, " [", cn, "]")
+
+          })
+
+        cn_events <- cn_events[
+          str_extract(cn_events, "^[^ ]+") %in% goi_cn
+        ]
+
+        cn_events <- unique(cn_events)
+
+        if (length(cn_events) == 0) {
+          "."
+        } else {
+          paste(sort(cn_events), collapse = ", ")
+        }
+      }
+    }
+
+  ) %>%
+
+  ungroup()
+
 # ======================================================
 # Extract BRCA CN change status (ROBUST VERSION)
 # ======================================================
@@ -1571,7 +1635,9 @@ final_out <- hrd_status_wide %>%
 
     BRCA_context,
     
-    PRE_STATE, 
+    PRE_STATE,
+    
+    PRE_CN_GOI_SUMMARY, 
     
     PRE_SNV_SUMMARY,
     
@@ -1643,7 +1709,7 @@ final_out <- final_out %>%
 
 write.table(
   driver_events,
-  "driver_events_v9-8.txt",
+  "driver_events_v10-7.txt",
   sep = "\t",
   quote = FALSE,
   row.names = FALSE
@@ -1651,7 +1717,7 @@ write.table(
 
 write.table(
   hrd_status_wide,
-  "hrd_status_wide_v9-8.txt",
+  "hrd_status_wide_v10-7.txt",
   sep = "\t",
   quote = FALSE,
   row.names = FALSE
@@ -1659,7 +1725,7 @@ write.table(
 
 write.table(
   final_out,
-  "final_out_v9-8.txt",
+  "final_out_v10-7.txt",
   sep = "\t",
   quote = FALSE,
   row.names = FALSE

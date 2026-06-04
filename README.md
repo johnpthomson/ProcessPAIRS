@@ -239,6 +239,9 @@ Class	Interpretation
 4.No_clear_genomic_resistance	No convincing mechanism
 Post-hoc biological checks ensure canonical pathway assignments remain consistent with known resistance biology.
 
+
+(ProcessPAIRS v10-7 workflow diagram.png)
+
 ________________________________________
 **CODE HISTORY AND RECENT UPDATES**
 ________________________________________

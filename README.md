@@ -2,7 +2,7 @@
 
 
 **Methods Overview (v10-8: June 4th 2026)**
-This analysis pipeline was developed to identify and classify homologous recombination deficiency (HRD)-associated genomic resistance mechanisms in paired tumour samples collected before and after PARP inhibitor (PARPi) exposure. The workflow integrates somatic single nucleotide variant (SNV) data (SNV-ID resolved), copy-number (CN) alterations, curated HRD gene annotations, and pathway-level biological priors to infer adaptive tumour evolution and resistance states.
+This analysis pipeline was developed to identify and classify homologous recombination deficiency (HRD)-associated genomic resistance mechanisms in paired tumour samples collected before and after PARP inhibitor (PARPi) exposure. The workflow integrates somatic single nucleotide variant (SNV) data (SNV-ID resolved), copy-number (CN) alterations and pathway-level biological priors to infer adaptive tumour evolution and resistance states as well as explain baseline genomic states which may be selected for resistance.
 The analysis was implemented in R using custom scripts and includes the following major stages:
 Data loading and harmonisation
 Resistance gene annotation integration

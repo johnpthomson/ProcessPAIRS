@@ -492,7 +492,7 @@ The framework combines genomic observations with curated biological priors to ge
 ---
 **EXAMPLE_OUTPUT_VISUALS**
 
-![Alluvial_stankey4](Alluvial_stankey4.png)
+![Alluvial Stankey](Alluvial%20stankey4.png)
 
 
 

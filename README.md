@@ -35,6 +35,10 @@ Human-readable resistance summaries and evolutionary narratives
 
 ---
 
+![Stankey4](Screenshot%202026-06-17%20165608.png)
+
+---
+
 **REQUIRED INPUT FILES**
 
 
@@ -489,10 +493,7 @@ The framework combines genomic observations with curated biological priors to ge
 
 
 
----
-**EXAMPLE_OUTPUT_VISUALS**
 
-![Alluvial Stankey](Alluvial%20stankey4.png)
 
 
 

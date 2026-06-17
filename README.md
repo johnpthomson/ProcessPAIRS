@@ -37,25 +37,18 @@ Human-readable resistance summaries and evolutionary narratives
 
 **REQUIRED INPUT FILES**
 
-merged
 
-Gene-level copy-number and SNV matrix containing PRE, POST and gDNA samples.
+SNV data : extract of MAF with patient ID per PRE and POST, variant details, VAF and protein change.
 
-snv_sh
+CN data: CN calls . per gene, per PRE and POST sample
 
-Variant-level SNV catalogue used for evolutionary reconstruction.
+Gene_list_input_processpairs.txt : Table with published info and logic to support possible resistance mechanisms and directions (i.e. CN loss or LOF mutation)
 
-Gene_list_input_processpairs_v10-7.txt
+Pathway information : published gene set pathway lists
 
-Curated resistance annotation table containing pathway, mechanism and classification information.
+Oncokb_v1_Sept2023_.txt : OncoKB gene set info
 
-Oncokb_v1_Sept2023_sh.txt
-
-OncoKB tumour suppressor and oncogene annotations.
-
-exclude.txt
-
-Optional patient exclusion list.
+exclude.txt : Optional patient exclusion list.
 
 ---
 
@@ -494,107 +487,11 @@ The framework combines genomic observations with curated biological priors to ge
 
 ![ProcessPAIRS workflow diagram](ProcessPAIRS%20v10-7%20workflow%20diagram.png)
 
-________________________________________
-**CODE HISTORY AND RECENT UPDATES**
-________________________________________
 
 
-**Key Update in v10-1**
-This version represents a substantial redesign of the resistance interpretation framework, with major conceptual updates in how genomic events are defined and prioritised. Major change in the input data parsing tables which drive the model logic, complete rebuild of logic based on table loading and BRCA ORF modelling.  
+---
+**EXAMPLE_OUTPUT_VISUALS**
 
-**1. Integration of curated, peer-reviewed resistance priors**
-The pipeline now directly incorporates a manually curated and externally informed resistance annotation table (Gene_list_input_processpairs_v9-8.txt), which encodes prior biological knowledge for each gene, including:
-•	CN directionality rules (GAIN / LOSS / UNCLEAR) 
-•	SNV functional axis (POST_ACQUIRED_PATHOGENIC vs SECONDARY_REVERSION) 
-•	Pathway membership 
-•	Mechanism classification 
-•	High-level classifier grouping (e.g. HR bypass, fork protection, BRCA restoration) 
-This represents a shift from purely data-driven event calling to a hybrid inference model, where:
-genomic observations are explicitly interpreted through a biologically pre-defined resistance framework
-As a result, gene-level SNV and CN events are no longer interpreted in isolation, but are contextualised within curated, peer-reviewed resistance biology.
-________________________________________
-**2. Explicit BRCA ORF restoration module**
-A dedicated BRCA structural restoration module has been introduced to predict orf restoration in cases with secondary mutation. 
-This module:
-• Operates only where second POST only SNV event occurs downstream of original SNV event seen in both PRE and POST. 
-•	Extracts frameshift protein annotations (e.g. fs*21) 
-•	Sums cumulative frameshift length across variants per gene 
-•	Evaluates reading-frame preservation using modulo-3 logic: 
-total frameshift length % 3 == 0 → putative ORF restoration
-This enables detection of:
-•	cryptic BRCA1/2 reactivation events 
-•	compound frameshift rescues 
-•	structural restoration despite persistent SNV burden 
-Importantly, BRCA ORF restoration is then used as a hierarchical override feature in downstream classification, ensuring that:
-structural reversion signals take priority over aggregate SNV burden or CN state changes when defining BRCA-associated adaptive resistance
-________________________________________
-**3. Conceptual impact on resistance modelling**
-Together, these updates shift the framework from:
-•	purely observational genomic comparison
-to 
-•	biologically constrained, annotation-driven resistance inference 
-Specifically:
-•	Gene behaviour is now interpreted through curated resistance priors (not post-hoc clustering) 
-•	BRCA biology is extended beyond SNV/CN state into functional protein restoration space 
-•	Resistance tiers are therefore anchored to mechanistic interpretation rather than purely statistical recurrence 
-
-
-________________________________________
-**Key Updates in v10-2**
-This version introduced exclusion table load ins to parse patient IDs for cohort curation.
-
-**Added support for external cohort exclusion using exclude.txt.**
-Patients listed in this file are removed immediately prior to final output table generation.
-Enables:
-QC-driven exclusions
-reproducible cohort curation
-
-________________________________________
-**Key Updates in v10-3**
-This version substantially refines the biologically informed resistance attribution framework through hierarchical driver override prioritisation, ORF-aware BRCA restoration interpretation, mechanism-aware main driver reassignment, expanded canonical fork protection logic, and improved harmonisation between genomic events, resistance mechanisms, and final adaptive resistance state classification.
-
-**1. Biological driver override framework refined**
-Refined biologically informed driver override hierarchy to improve concordance between final_classifier, resistance_mechanism, and main_driver.
-Added hierarchical prioritisation of:
-canonical fork protection genes
-PARP adaptation genes
-HR bypass drivers
-validated BRCA restoration events
-Prevents biologically weaker events from incorrectly dominating final driver assignment when stronger mechanistic resistance signals coexist.
-
-**2. BRCA restoration interpretation updated**
-Added stricter BRCA restoration interpretation logic such that:
-SECONDARY_REVERSION is only assigned when ORF restoration evidence is present (BRCA_orf_restore == "Y")
-non-restorative secondary BRCA events are reclassified as:
-SECONDARY_MUTATION
-Improves separation of:
-probable functional BRCA rescue events
-secondary BRCA alterations lacking evidence of restored protein function.
-
-**3. Main driver selection aligned to biological resistance states**
-Updated main driver assignment rules to prevent isolated BRCA CN gain events from dominating non-BRCA resistance states.
-Ensures fork protection states preferentially select:
-TP53BP1
-MAD2L2
-Shieldin-axis genes
-Ensures drug adaptation states preferentially select:
-PARP1
-PARP2
-PARG
-Improves biological consistency between:
-final_classifier
-resistance_mechanism
-main_driver
-
-
-________________________________________
-**Key Updates in v10-7**
-This version classifies BRCA_CN status in relapse and also summarises PRE and POST pathogenic and likely pathogenic SNV counts and names.
-
-
-________________________________________
-**Key Updates in v10-8**
-This version adds a column for PRE CN status over 5 genes of interest, BRCA1,BRCA2,TP53BP1,CCNE1 and MYC.
 
 
 

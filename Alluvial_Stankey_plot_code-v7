@@ -1,5 +1,5 @@
 #############################################
-# 4-stage Sankey plot - v5
+# 4-stage Sankey plot - v7
 #############################################
 
 library(dplyr)
@@ -42,7 +42,7 @@ sankey_df <- hrd_status_wide %>%
     ),
 
 
-    # Reclassify resistance mechanism
+    # Resistance mechanism labels
     resistance_headline = case_when(
 
       resistance_headline ==
@@ -79,7 +79,7 @@ sankey_df <- hrd_status_wide %>%
     ),
 
 
-    # Collapse driver complexity
+    # Driver complexity
     Complexity = case_when(
 
       is.na(total_driver_events) ~ "0",
@@ -97,44 +97,43 @@ sankey_df <- hrd_status_wide %>%
     ),
 
 
-    # Plotting order
+    # NEW:
+    # variable used only for colouring final resistance strata
+    resistance_stratum_fill = resistance_headline
+
+
+  ) %>%
+
+
+  mutate(
 
     BRCA_status = factor(
-
       BRCA_status,
-
       levels = c(
         "BRCAm",
         "BRCAwt",
         "Unknown"
       )
-
     ),
 
 
     PRA_status = factor(
-
       PRA_status,
-
       levels = c(
         "PRA Present",
         "No PRA"
       )
-
     ),
 
 
     Complexity = factor(
-
       Complexity,
-
       levels = c(
         "5+",
         "3-4",
         "1-2",
         "0"
       )
-
     ),
 
 
@@ -165,6 +164,7 @@ sankey_df <- hrd_status_wide %>%
     BRCA_status,
     PRA_status,
     resistance_headline,
+    resistance_stratum_fill,
     Complexity
 
   ) %>%
@@ -193,6 +193,7 @@ p <- ggplot(
 
 ) +
 
+
   geom_alluvium(
 
     aes(fill = resistance_headline),
@@ -205,10 +206,25 @@ p <- ggplot(
   ) +
 
 
+  #############################################
+  # UPDATED STRATA COLOURING
+  #############################################
+
   geom_stratum(
 
+    aes(
+
+      fill = after_stat(
+        ifelse(
+          x == 4,
+          as.character(stratum),
+          "Other"
+        )
+      )
+
+    ),
+
     width = 0.30,
-    fill = "grey95",
     colour = "black"
 
   ) +
@@ -237,7 +253,7 @@ p <- ggplot(
   ) +
 
 
-    theme_bw() +
+  theme_bw() +
 
 
   theme(
@@ -271,7 +287,6 @@ p <- ggplot(
     ),
 
 
-    # increased for right-side labels
     plot.margin = margin(
       t = 5,
       r = 100,
@@ -284,11 +299,6 @@ p <- ggplot(
 
     axis.ticks.y = element_blank(),
 
-
-    #############################################
-    # Remove plot box and background structure
-    #############################################
-
     panel.border = element_blank(),
 
     panel.grid = element_blank(),
@@ -297,6 +307,10 @@ p <- ggplot(
 
   ) +
 
+
+  #############################################
+  # Shared colour palette
+  #############################################
 
   scale_fill_manual(
 
@@ -321,7 +335,10 @@ p <- ggplot(
         "#E398E0",
 
       "g.No clear Post event : PRA -ve" =
-        "#C4BDC7"
+        "#C4BDC7",
+
+      "Other" =
+        "grey95"
 
     ),
 
@@ -333,7 +350,8 @@ p <- ggplot(
       "Fork protection",
       "Drug target adaptation",
       "No clear Post event : PRA +ve",
-      "No clear Post event : PRA -ve"
+      "No clear Post event : PRA -ve",
+      "Other"
 
     )
 
@@ -355,31 +373,33 @@ p <- ggplot(
 
   labs(
 
-    title = "Evolutionary trajectories of PARPi resistance",
+    title =
+      "Evolutionary trajectories of PARPi resistance",
 
     x = NULL,
 
-    y = "Patients",
+    y =
+      "Patients",
 
-    fill = "Resistance mechanism"
+    fill =
+      "Resistance mechanism"
 
   )
 
 
 
 #############################################
-# Add strata labels
+# Extract strata positions
 #############################################
 
 gb <- ggplot_build(p)
 
-
-# Extract stratum positions
 strata_df <- gb$data[[2]]
 
 
+
 #############################################
-# Labels for first 3 axes
+# Labels first 3 axes
 #############################################
 
 strata_left <- strata_df %>%
@@ -407,7 +427,7 @@ strata_left <- strata_df %>%
 
 
 #############################################
-# Labels for resistance mechanisms
+# Resistance labels
 #############################################
 
 strata_right <- strata_df %>%
@@ -420,23 +440,23 @@ strata_right <- strata_df %>%
 
     x_label = x + 0.25,
 
-    label_clean = gsub(
-      "^[a-g]\\.",
-      "",
-      stratum
-    )
+    label_clean =
+      gsub(
+        "^[a-g]\\.",
+        "",
+        stratum
+      )
 
   )
 
 
 
 #############################################
-# Final plot with labels
+# Final plot
 #############################################
 
 p +
 
-  # BRCA / PRA / complexity labels
   geom_text(
 
     data = strata_left,
@@ -456,7 +476,6 @@ p +
   ) +
 
 
-  # Resistance mechanism labels
   geom_text(
 
     data = strata_right,

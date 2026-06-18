@@ -35,7 +35,7 @@ Human-readable resistance summaries and evolutionary narratives
 
 ---
 
-![Stankey4](Screenshot%202026-06-17%20165608.png)
+![Stankeyv7](Stankeyv7.png)
 
 ---
 

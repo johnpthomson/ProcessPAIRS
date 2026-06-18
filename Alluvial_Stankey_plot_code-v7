@@ -1,0 +1,478 @@
+#############################################
+# 4-stage Sankey plot - v5
+#############################################
+
+library(dplyr)
+library(ggplot2)
+library(ggalluvial)
+library(grid)
+
+
+sankey_df <- hrd_status_wide %>%
+
+  mutate(
+
+    # Collapse BRCA context into BRCAm vs BRCAwt
+    BRCA_status = case_when(
+
+      BRCA_context %in% c(
+        "1a.BRCA_germline",
+        "1b.BRCA_shared_pre_post"
+      ) ~ "BRCAm",
+
+      BRCA_context %in% c(
+        "2.BRCA_CN_altered_Pre",
+        "3.No_BRCA_event"
+      ) ~ "BRCAwt",
+
+      TRUE ~ "Unknown"
+
+    ),
+
+
+    # PRA status
+    PRA_status = case_when(
+
+      PRA_high_confidence ~
+        "PRA Present",
+
+      TRUE ~
+        "No PRA"
+
+    ),
+
+
+    # Reclassify resistance mechanism
+    resistance_headline = case_when(
+
+      resistance_headline ==
+        "BRCA restoration" ~
+        "a.BRCA restoration",
+
+      resistance_headline ==
+        "Acquired BRCA-associated adaptation" ~
+        "b.Acquired BRCA-associated adaptation",
+
+      resistance_headline ==
+        "HR bypass" ~
+        "c.HR bypass",
+
+      resistance_headline ==
+        "Fork protection" ~
+        "d.Fork protection",
+
+      resistance_headline ==
+        "Drug target adaptation" ~
+        "e.Drug target adaptation",
+
+      resistance_headline ==
+        "No clear genomic resistance" &
+        PRA_status == "PRA Present" ~
+        "f.No clear Post event : PRA +ve",
+
+      resistance_headline ==
+        "No clear genomic resistance" ~
+        "g.No clear Post event : PRA -ve",
+
+      TRUE ~ resistance_headline
+
+    ),
+
+
+    # Collapse driver complexity
+    Complexity = case_when(
+
+      is.na(total_driver_events) ~ "0",
+
+      total_driver_events >= 5 ~ "5+",
+
+      total_driver_events >= 3 &
+        total_driver_events <= 4 ~ "3-4",
+
+      total_driver_events >= 1 &
+        total_driver_events <= 2 ~ "1-2",
+
+      TRUE ~ "0"
+
+    ),
+
+
+    # Plotting order
+
+    BRCA_status = factor(
+
+      BRCA_status,
+
+      levels = c(
+        "BRCAm",
+        "BRCAwt",
+        "Unknown"
+      )
+
+    ),
+
+
+    PRA_status = factor(
+
+      PRA_status,
+
+      levels = c(
+        "PRA Present",
+        "No PRA"
+      )
+
+    ),
+
+
+    Complexity = factor(
+
+      Complexity,
+
+      levels = c(
+        "5+",
+        "3-4",
+        "1-2",
+        "0"
+      )
+
+    ),
+
+
+    resistance_headline = factor(
+
+      resistance_headline,
+
+      levels = c(
+
+        "a.BRCA restoration",
+        "b.Acquired BRCA-associated adaptation",
+        "c.HR bypass",
+        "d.Fork protection",
+        "e.Drug target adaptation",
+        "f.No clear Post event : PRA +ve",
+        "g.No clear Post event : PRA -ve"
+
+      )
+
+    )
+
+  ) %>%
+
+
+  select(
+
+    patient,
+    BRCA_status,
+    PRA_status,
+    resistance_headline,
+    Complexity
+
+  ) %>%
+
+
+  distinct()
+
+
+
+#############################################
+# Sankey plot
+#############################################
+
+p <- ggplot(
+
+  sankey_df,
+
+  aes(
+
+    axis1 = BRCA_status,
+    axis2 = PRA_status,
+    axis3 = Complexity,
+    axis4 = resistance_headline
+
+  )
+
+) +
+
+  geom_alluvium(
+
+    aes(fill = resistance_headline),
+
+    width = 0.30,
+    alpha = 0.8,
+    colour = "grey40",
+    linewidth = 0.10
+
+  ) +
+
+
+  geom_stratum(
+
+    width = 0.30,
+    fill = "grey95",
+    colour = "black"
+
+  ) +
+
+
+  scale_x_discrete(
+
+    limits = c(
+
+      "BRCA Status",
+      "PRA Status",
+      "Driver Complexity",
+      "Resistance Mechanism"
+
+    ),
+
+    expand = c(.15, .15)
+
+  ) +
+
+
+  coord_cartesian(
+
+    clip = "off"
+
+  ) +
+
+
+    theme_bw() +
+
+
+  theme(
+
+    legend.position = "bottom",
+
+    legend.text = element_text(
+      size = 7
+    ),
+
+    legend.title = element_text(
+      size = 8
+    ),
+
+    legend.key.size = unit(
+      0.35,
+      "cm"
+    ),
+
+    legend.spacing.x = unit(
+      0.15,
+      "cm"
+    ),
+
+
+    legend.box.margin = margin(
+      t = 10,
+      r = 0,
+      b = 10,
+      l = 0
+    ),
+
+
+    # increased for right-side labels
+    plot.margin = margin(
+      t = 5,
+      r = 100,
+      b = 40,
+      l = 5
+    ),
+
+
+    axis.text.y = element_blank(),
+
+    axis.ticks.y = element_blank(),
+
+
+    #############################################
+    # Remove plot box and background structure
+    #############################################
+
+    panel.border = element_blank(),
+
+    panel.grid = element_blank(),
+
+    axis.line = element_blank()
+
+  ) +
+
+
+  scale_fill_manual(
+
+    values = c(
+
+      "a.BRCA restoration" =
+        "#DBDB1A",
+
+      "b.Acquired BRCA-associated adaptation" =
+        "#D66247",
+
+      "c.HR bypass" =
+        "#78CFA9",
+
+      "d.Fork protection" =
+        "#5397DB",
+
+      "e.Drug target adaptation" =
+        "#C9A363",
+
+      "f.No clear Post event : PRA +ve" =
+        "#E398E0",
+
+      "g.No clear Post event : PRA -ve" =
+        "#C4BDC7"
+
+    ),
+
+    labels = c(
+
+      "BRCA restoration",
+      "Acquired BRCA-associated adaptation",
+      "HR bypass",
+      "Fork protection",
+      "Drug target adaptation",
+      "No clear Post event : PRA +ve",
+      "No clear Post event : PRA -ve"
+
+    )
+
+  ) +
+
+
+  guides(
+
+    fill = guide_legend(
+
+      ncol = 3,
+
+      byrow = TRUE
+
+    )
+
+  ) +
+
+
+  labs(
+
+    title = "Evolutionary trajectories of PARPi resistance",
+
+    x = NULL,
+
+    y = "Patients",
+
+    fill = "Resistance mechanism"
+
+  )
+
+
+
+#############################################
+# Add strata labels
+#############################################
+
+gb <- ggplot_build(p)
+
+
+# Extract stratum positions
+strata_df <- gb$data[[2]]
+
+
+#############################################
+# Labels for first 3 axes
+#############################################
+
+strata_left <- strata_df %>%
+
+  filter(
+    x %in% c(1,2,3)
+  ) %>%
+
+  mutate(
+
+    label_clean = case_when(
+
+      stratum == "PRA Present" ~
+        "Detected",
+
+      stratum == "No PRA" ~
+        "Undetected",
+
+      TRUE ~ stratum
+
+    )
+
+  )
+
+
+
+#############################################
+# Labels for resistance mechanisms
+#############################################
+
+strata_right <- strata_df %>%
+
+  filter(
+    x == 4
+  ) %>%
+
+  mutate(
+
+    x_label = x + 0.25,
+
+    label_clean = gsub(
+      "^[a-g]\\.",
+      "",
+      stratum
+    )
+
+  )
+
+
+
+#############################################
+# Final plot with labels
+#############################################
+
+p +
+
+  # BRCA / PRA / complexity labels
+  geom_text(
+
+    data = strata_left,
+
+    aes(
+
+      x = x,
+      y = y,
+      label = label_clean
+
+    ),
+
+    inherit.aes = FALSE,
+
+    size = 2.0
+
+  ) +
+
+
+  # Resistance mechanism labels
+  geom_text(
+
+    data = strata_right,
+
+    aes(
+
+      x = x_label,
+      y = y,
+      label = label_clean
+
+    ),
+
+    inherit.aes = FALSE,
+
+    hjust = 0,
+
+    size = 2.2
+
+  )

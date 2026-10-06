@@ -1,0 +1,815 @@
+############################################################
+# 44. FINAL FIGURE 3
+############################################################
+
+figure3 <-
+  patchwork::wrap_plots(
+
+    pA_split,
+
+    bottom_panels,
+
+    ncol =
+      1,
+
+    heights =
+      c(
+        3,
+        1
+      )
+
+  ) +
+
+  patchwork::plot_annotation(
+
+    title =
+      "Genomic architecture of PARPi resistance"
+
+  )
+
+
+############################################################
+# 45. DISPLAY
+############################################################
+
+print(
+  figure3
+)
+
+
+############################################################
+# 46. FINAL CHECK — GENE ORDER
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "FINAL GENE ORDER\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+print(
+  gene_order_check,
+  n = Inf
+)
+
+
+############################################################
+# 47. FINAL CHECK — BRCA CONTEXT PATIENT ORDER
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "BRCA CONTEXT PATIENT ORDER\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+print(
+  patient_order_brca
+)
+
+
+############################################################
+# 48. FINAL CHECK — BRCAwt PATIENT ORDER
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "BRCAwt PATIENT ORDER\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+print(
+  patient_order_wt
+)
+
+
+############################################################
+# 49. BRCA CONTEXT CHECK
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "BRCA CONTEXT CHECK\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+patient_architecture %>%
+
+  count(
+
+    BRCA_context,
+
+    BRCA_context_display,
+
+    BRCA_group
+
+  ) %>%
+
+  print()
+
+
+############################################################
+# 50. PANEL A EVENT COUNTS — FULL COHORT
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "PANEL A EVENT COUNTS — FULL COHORT\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+hrd_fig3 %>%
+
+  count(
+    display_state
+  ) %>%
+
+  arrange(
+
+    match(
+
+      display_state,
+
+      names(
+        event_colours
+      )
+
+    )
+
+  ) %>%
+
+  print()
+
+
+############################################################
+# 51. PANEL A EVENT COUNTS — BRCA CONTEXT
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "PANEL A EVENT COUNTS — BRCA CONTEXT\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+panel_A_brca %>%
+
+  count(
+
+    gene,
+
+    display_state
+
+  ) %>%
+
+  filter(
+
+    display_state !=
+      "No event"
+
+  ) %>%
+
+  print(
+    n = Inf
+  )
+
+
+############################################################
+# 52. PANEL A EVENT COUNTS — BRCAwt
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "PANEL A EVENT COUNTS — BRCAwt\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+panel_A_wt %>%
+
+  count(
+
+    gene,
+
+    display_state
+
+  ) %>%
+
+  filter(
+
+    display_state !=
+      "No event"
+
+  ) %>%
+
+  print(
+    n = Inf
+  )
+
+
+############################################################
+# 53. BRCA1 / BRCA2 EVENT CHECK
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "BRCA1 / BRCA2 EVENT CHECK\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+hrd_fig3 %>%
+
+  filter(
+
+    gene %in%
+      c(
+        "BRCA1",
+        "BRCA2"
+      ),
+
+    display_state !=
+      "No event"
+
+  ) %>%
+
+  count(
+
+    gene,
+
+    display_state
+
+  ) %>%
+
+  print()
+
+
+############################################################
+# 54. CN DIRECTION CHECK
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "CN DIRECTION CHECK\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+hrd_fig3 %>%
+
+  filter(
+
+    display_state %in%
+      c(
+
+        "POST-CN_gain",
+
+        "POST-CN_loss",
+
+        "Pre-existing CN gain",
+
+        "Pre-existing CN loss"
+
+      )
+
+  ) %>%
+
+  select(
+
+    patient,
+
+    gene,
+
+    cn_num_Pre,
+
+    cn_num_Post,
+
+    pre_cn_direction,
+
+    post_cn_direction,
+
+    display_state
+
+  ) %>%
+
+  arrange(
+
+    patient,
+
+    gene
+
+  ) %>%
+
+  print(
+    n = Inf
+  )
+
+
+############################################################
+# 55. BRCA SNV DIRECTION CHECK
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "BRCA SNV DIRECTION CHECK\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+hrd_fig3 %>%
+
+  filter(
+
+    gene %in%
+      c(
+        "BRCA1",
+        "BRCA2"
+      )
+
+  ) %>%
+
+  select(
+
+    patient,
+
+    gene,
+
+    snv_count_Pre,
+
+    snv_count_Post,
+
+    snv_axis,
+
+    snv_direction,
+
+    display_state
+
+  ) %>%
+
+  arrange(
+
+    patient,
+
+    gene
+
+  ) %>%
+
+  print(
+    n = Inf
+  )
+
+
+############################################################
+# 56. PRA CHECK
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "PRA CHECK\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+patient_architecture %>%
+
+  count(
+    PRA_status
+  ) %>%
+
+  print()
+
+
+############################################################
+# 56A. PRA PLOTTING DATA CHECK
+#
+# IMPORTANT:
+#   This specifically checks that the PRA annotation
+#   has survived into BOTH Panel A split datasets.
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "PRA PLOTTING DATA CHECK\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+
+cat(
+  "\nBRCA context PRA rows:\n"
+)
+
+panel_A_full_brca %>%
+
+  filter(
+    panel_row == "PRA"
+  ) %>%
+
+  count(
+    display_state
+  ) %>%
+
+  print()
+
+
+cat(
+  "\nBRCAwt PRA rows:\n"
+)
+
+panel_A_full_wt %>%
+
+  filter(
+    panel_row == "PRA"
+  ) %>%
+
+  count(
+    display_state
+  ) %>%
+
+  print()
+
+
+############################################################
+# 56B. PRA CONSISTENCY CHECK
+############################################################
+
+pra_expected <-
+  patient_architecture %>%
+
+  select(
+    patient,
+    PRA_status
+  ) %>%
+
+  distinct()
+
+
+pra_plotted <-
+  bind_rows(
+
+    panel_A_full_brca %>%
+
+      filter(
+        panel_row == "PRA"
+      ) %>%
+
+      select(
+        patient,
+        display_state
+      ),
+
+    panel_A_full_wt %>%
+
+      filter(
+        panel_row == "PRA"
+      ) %>%
+
+      select(
+        patient,
+        display_state
+      )
+
+  )
+
+
+pra_check <-
+  pra_expected %>%
+
+  left_join(
+
+    pra_plotted,
+
+    by =
+      "patient"
+
+  ) %>%
+
+  mutate(
+
+    PRA_match =
+      PRA_status ==
+      display_state
+
+  )
+
+
+cat(
+  "\nPRA expected vs plotted:\n"
+)
+
+print(
+  pra_check,
+  n = Inf
+)
+
+
+if (
+  any(
+    !pra_check$PRA_match,
+    na.rm = TRUE
+  )
+) {
+
+  warning(
+    "PRA plotting mismatch detected."
+  )
+
+} else {
+
+  cat(
+    "\nPRA plotting check PASSED.\n"
+  )
+
+}
+
+
+############################################################
+# 57. PANEL A ANNOTATION CHECK
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "PANEL A ANNOTATION CHECK\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+patient_architecture %>%
+
+  select(
+
+    patient,
+
+    BRCA_context,
+
+    BRCA_context_display,
+
+    BRCA_group,
+
+    PRA_status,
+
+    resistance_class
+
+  ) %>%
+
+  arrange(
+
+    match(
+      patient,
+      c(
+        patient_order_brca,
+        patient_order_wt
+      )
+    )
+
+  ) %>%
+
+  print(
+    n = Inf
+  )
+
+
+############################################################
+# 57A. PANEL A ROW ALIGNMENT CHECK
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "PANEL A ROW ALIGNMENT CHECK\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+cat(
+  "\nMaster row order:\n"
+)
+
+print(
+  panel_A_row_order
+)
+
+
+cat(
+  "\nHeatmap rows:\n"
+)
+
+print(
+  levels(
+    factor(
+      panel_A_full_brca$panel_row,
+      levels =
+        panel_A_row_order
+    )
+  )
+)
+
+
+cat(
+  "\nSummary rows:\n"
+)
+
+print(
+  panel_A_row_order
+)
+
+
+cat(
+  "\nExpected gene rows:\n"
+)
+
+print(
+  rev(gene_order)
+)
+
+
+############################################################
+# 58. SAVE FIGURE
+############################################################
+
+ggsave(
+
+  filename =
+    "Figure3_Genomic_architecture_of_PARPi_resistance.png",
+
+  plot =
+    figure3,
+
+  width =
+    16,
+
+  height =
+    10,
+
+  units =
+    "in",
+
+  dpi =
+    600,
+
+  bg =
+    "white"
+
+)
+
+
+############################################################
+# 59. COMPLETE
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "FIGURE 3 COMPLETE\n"
+)
+
+cat(
+  "========================================\n"
+
+)
+
+cat(
+  "Patients: ",
+  length(final_patients),
+  "\n",
+  sep = ""
+)
+
+cat(
+  "BRCA context patients: ",
+  length(patient_order_brca),
+  "\n",
+  sep = ""
+)
+
+cat(
+  "BRCAwt patients: ",
+  length(patient_order_wt),
+  "\n",
+  sep = ""
+)
+
+cat(
+  "Panel A genes: ",
+  length(gene_order),
+  "\n",
+  sep = ""
+)
+
+cat(
+  "Panel A is split into BRCA context and BRCAwt.\n"
+)
+
+cat(
+  "Each split is independently ordered using all ",
+  length(gene_order),
+  " Panel A genes.\n",
+  sep = ""
+)
+
+cat(
+  "Patient ordering uses ONLY BRCA reversion, POST-CN_loss, ",
+  "POST-CN_gain, POST-loss-SNV and POST-gain-SNV.\n"
+)
+
+cat(
+  "Pre-existing CN gain/loss, Shared SNV and No event are ",
+  "excluded from patient ordering.\n"
+)
+
+cat(
+  "PRA, BRCA context and Resistance annotation rows are retained.\n"
+)
+
+cat(
+  "Summary plots and heatmaps use the SAME master row structure.\n"
+)
+
+cat(
+  "Stacked cohort bars therefore align directly with the gene rows.\n"
+)
+
+cat(
+  "PRA plotting consistency check is included.\n"
+)
+
+cat(
+  "Figure saved as:\n",
+  "Figure3_Genomic_architecture_of_PARPi_resistance.png\n"
+)

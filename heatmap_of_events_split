@@ -1,4 +1,3310 @@
 ############################################################
+# FIGURE 3 — Genomic architecture of PARPi resistance
+#
+# FINAL VERSION
+#
+# PANEL A:
+#   Split into:
+#     1. BRCA context
+#        - BRCA_germline
+#        - BRCA somatic
+#
+#     2. BRCAwt
+#
+#   Each split has:
+#     stacked cohort bar on the LEFT
+#     patient heatmap on the RIGHT
+#
+#   Stacked bars run RIGHT -> LEFT.
+#
+#   PRA row retained.
+#   BRCA context row retained directly underneath PRA.
+#
+# Patient ordering:
+#   Dynamically calculated separately within each
+#   BRCA-context subgroup.
+#
+# Ordering states:
+#   BRCA reversion
+#   POST-CN_loss
+#   POST-CN_gain
+#   POST-loss-SNV
+#   POST-gain-SNV
+#
+# Pre-existing CN, Shared SNV and No event:
+#   excluded from patient ordering.
+#
+# IMPORTANT PLOTTING FIXES:
+#   - Summary and heatmap use the SAME panel row structure.
+#   - Cohort bars therefore align exactly with gene rows.
+#   - PRA is explicitly populated from patient_architecture.
+############################################################
+
+
+############################################################
+# 1. CHECK INPUTS
+############################################################
+
+required_objects <- c(
+  "hrd_long",
+  "hrd_status_wide",
+  "final_out"
+)
+
+missing_objects <- required_objects[
+  !sapply(
+    required_objects,
+    exists
+  )
+]
+
+if (length(missing_objects) > 0) {
+
+  stop(
+    "Missing objects: ",
+    paste(
+      missing_objects,
+      collapse = ", "
+    )
+  )
+
+}
+
+
+############################################################
+# 2. FINAL COHORT
+############################################################
+
+final_patients <-
+  final_out %>%
+  filter(
+    !is.na(patient),
+    patient != ""
+  ) %>%
+  distinct(patient) %>%
+  pull(patient) %>%
+  as.character()
+
+
+cat(
+  "\nNumber of patients in final_out: ",
+  length(final_patients),
+  "\n",
+  sep = ""
+)
+
+
+############################################################
+# 3. RESTRICT DATA TO FINAL COHORT
+############################################################
+
+hrd_long <-
+  hrd_long %>%
+  mutate(
+    patient =
+      as.character(patient)
+  ) %>%
+  filter(
+    patient %in%
+      final_patients
+  )
+
+
+hrd_status_wide <-
+  hrd_status_wide %>%
+  mutate(
+    patient =
+      as.character(patient)
+  ) %>%
+  filter(
+    patient %in%
+      final_patients
+  )
+
+
+final_out <-
+  final_out %>%
+  mutate(
+    patient =
+      as.character(patient)
+  )
+
+
+############################################################
+# 4. GENE RULES
+############################################################
+
+gene_rules <-
+  tibble::tribble(
+
+    ~gene, ~classifier_group,
+
+    "BRCA1",
+    "1.BRCA_associated_adaptive_restoration",
+
+    "BRCA2",
+    "1.BRCA_associated_adaptive_restoration",
+
+    "TP53BP1",
+    "2a.HR_bypass",
+
+    "SHLD1",
+    "2a.HR_bypass",
+
+    "SHLD2",
+    "2a.HR_bypass",
+
+    "SHLD3",
+    "2a.HR_bypass",
+
+    "REV7",
+    "2a.HR_bypass",
+
+    "PALB2",
+    "2a.HR_bypass",
+
+    "RAD51C",
+    "2a.HR_bypass",
+
+    "RAD51",
+    "2b.Fork_protection",
+
+    "PTIP",
+    "2b.Fork_protection",
+
+    "CHD4",
+    "2b.Fork_protection",
+
+    "PARP1",
+    "2c.Drug_target_adaptation",
+
+    "PARG",
+    "2c.Drug_target_adaptation"
+
+  )
+
+
+############################################################
+# 5. BRCA RESTORATION PATIENTS
+############################################################
+
+brca_restoration_patients <-
+  final_out %>%
+  filter(
+    resistance_headline ==
+      "BRCA restoration"
+  ) %>%
+  pull(patient) %>%
+  unique() %>%
+  as.character()
+
+
+############################################################
+# 6. ACQUIRED BRCA ADAPTATION PATIENTS
+############################################################
+
+brca_adaptation_patients <-
+  final_out %>%
+  filter(
+    resistance_headline ==
+      "Acquired BRCA-associated adaptation"
+  ) %>%
+  pull(patient) %>%
+  unique() %>%
+  as.character()
+
+
+############################################################
+# 7. PRE-TREATMENT CN DIRECTION
+############################################################
+
+pre_cn_direction <-
+  final_out %>%
+
+  select(
+    patient,
+    PRA_events
+  ) %>%
+
+  mutate(
+
+    patient =
+      as.character(patient),
+
+    PRA_events =
+      as.character(PRA_events)
+
+  ) %>%
+
+  filter(
+
+    !is.na(PRA_events),
+
+    PRA_events != ""
+
+  ) %>%
+
+  mutate(
+
+    PRA_event =
+      str_split(
+        PRA_events,
+        "\\s*;\\s*"
+      )
+
+  ) %>%
+
+  tidyr::unnest(
+    PRA_event
+  ) %>%
+
+  mutate(
+
+    PRA_event =
+      str_trim(
+        PRA_event
+      ),
+
+    gene =
+      toupper(
+        str_trim(
+          str_extract(
+            PRA_event,
+            "^[^\\[]+"
+          )
+        )
+      ),
+
+    cn_direction =
+      case_when(
+
+        str_detect(
+          PRA_event,
+          "\\[CN_GAIN\\]"
+        ) ~
+          "gain",
+
+        str_detect(
+          PRA_event,
+          "\\[CN_LOSS\\]"
+        ) ~
+          "loss",
+
+        TRUE ~
+          NA_character_
+
+      )
+
+  ) %>%
+
+  filter(
+
+    !is.na(gene),
+
+    gene != "",
+
+    !is.na(cn_direction)
+
+  ) %>%
+
+  select(
+
+    patient,
+
+    gene,
+
+    cn_direction
+
+  ) %>%
+
+  distinct()
+
+
+############################################################
+# 8. GET RESISTANCE REPORT
+############################################################
+
+if (
+  "resistance_report" %in%
+  colnames(hrd_status_wide)
+) {
+
+  post_report <-
+    hrd_status_wide %>%
+    select(
+      patient,
+      resistance_headline,
+      resistance_report
+    )
+
+} else if (
+  "resistance_report" %in%
+  colnames(final_out)
+) {
+
+  post_report <-
+    final_out %>%
+    select(
+      patient,
+      resistance_headline,
+      resistance_report
+    )
+
+} else {
+
+  stop(
+    "Could not find resistance_report in hrd_status_wide or final_out."
+  )
+
+}
+
+
+############################################################
+# 9. PARSE RESISTANCE REPORT
+############################################################
+
+resistance_events <-
+  post_report %>%
+
+  filter(
+
+    !is.na(resistance_report),
+
+    resistance_report != ""
+
+  ) %>%
+
+  mutate(
+
+    resistance_report =
+      str_replace_all(
+        resistance_report,
+        "\\s+",
+        " "
+      )
+
+  ) %>%
+
+  mutate(
+
+    report_entry =
+      str_split(
+        resistance_report,
+        "\\s*;\\s*(?=[A-Za-z0-9_-]+\\s*:)"
+
+      )
+
+  ) %>%
+
+  tidyr::unnest(
+    report_entry
+  ) %>%
+
+  mutate(
+
+    report_entry =
+      str_trim(
+        report_entry
+      ),
+
+    gene =
+      toupper(
+        str_trim(
+          str_extract(
+            report_entry,
+            "^[^:]+"
+          )
+        )
+      ),
+
+    resistance_class =
+      str_trim(
+        str_match(
+          report_entry,
+          ":\\s*([^\\[]+)\\["
+        )[, 2]
+      ),
+
+    event_text =
+      toupper(
+        str_trim(
+          str_match(
+            report_entry,
+            "\\[([^\\]]+)\\]"
+          )[, 2]
+        )
+      )
+
+  ) %>%
+
+  filter(
+
+    !is.na(gene),
+
+    gene != ""
+
+  ) %>%
+
+  select(
+
+    patient,
+
+    resistance_headline,
+
+    gene,
+
+    resistance_class,
+
+    event_text
+
+  )
+
+
+############################################################
+# 10. POST-SNV DIRECTION
+############################################################
+
+post_snv_direction <-
+  resistance_events %>%
+
+  filter(
+
+    str_detect(
+      event_text,
+      "SNV_GAIN|SNV_LOSS"
+    )
+
+  ) %>%
+
+  mutate(
+
+    snv_direction =
+      case_when(
+
+        str_detect(
+          event_text,
+          "SNV_GAIN"
+        ) ~
+          "gain",
+
+        str_detect(
+          event_text,
+          "SNV_LOSS"
+        ) ~
+          "loss",
+
+        TRUE ~
+          NA_character_
+
+      )
+
+  ) %>%
+
+  filter(
+    !is.na(snv_direction)
+  ) %>%
+
+  select(
+
+    patient,
+
+    gene,
+
+    snv_direction
+
+  ) %>%
+
+  distinct()
+
+
+############################################################
+# 11. POST-CN DIRECTION
+############################################################
+
+post_cn_direction <-
+  resistance_events %>%
+
+  filter(
+
+    str_detect(
+      event_text,
+      "CN_GAIN"
+    ) |
+
+      str_detect(
+        event_text,
+        "CN_LOSS"
+      )
+
+  ) %>%
+
+  mutate(
+
+    cn_direction =
+      case_when(
+
+        str_detect(
+          event_text,
+          "CN_GAIN"
+        ) ~
+          "gain",
+
+        str_detect(
+          event_text,
+          "CN_LOSS"
+        ) ~
+          "loss",
+
+        TRUE ~
+          NA_character_
+
+      )
+
+  ) %>%
+
+  filter(
+    !is.na(cn_direction)
+  ) %>%
+
+  select(
+
+    patient,
+
+    gene,
+
+    cn_direction
+
+  ) %>%
+
+  distinct()
+
+
+############################################################
+# 12. BUILD FIGURE 3 EVENT TABLE
+############################################################
+
+hrd_fig3 <-
+  hrd_long %>%
+
+  mutate(
+
+    patient =
+      as.character(patient),
+
+    gene =
+      toupper(
+        as.character(gene)
+      )
+
+  ) %>%
+
+  left_join(
+
+    final_out %>%
+
+      select(
+
+        patient,
+
+        final_classifier,
+
+        resistance_headline
+
+      ) %>%
+
+      distinct(),
+
+    by =
+      "patient"
+
+  ) %>%
+
+  left_join(
+
+    pre_cn_direction %>%
+
+      rename(
+        pre_cn_direction =
+          cn_direction
+      ),
+
+    by =
+      c(
+        "patient",
+        "gene"
+      )
+
+  ) %>%
+
+  left_join(
+
+    post_cn_direction %>%
+
+      rename(
+        post_cn_direction =
+          cn_direction
+      ),
+
+    by =
+      c(
+        "patient",
+        "gene"
+      )
+
+  ) %>%
+
+  left_join(
+
+    post_snv_direction,
+
+    by =
+      c(
+        "patient",
+        "gene"
+      )
+
+  ) %>%
+
+  mutate(
+
+    display_state =
+
+      case_when(
+
+        gene %in%
+          c(
+            "BRCA1",
+            "BRCA2"
+          ) &
+
+          patient %in%
+          brca_restoration_patients &
+
+          snv_count_Pre > 0 &
+
+          snv_count_Post >
+          snv_count_Pre &
+
+          snv_axis ==
+          "SECONDARY_REVERSION" ~
+
+          "BRCA reversion",
+
+
+        gene %in%
+          c(
+            "BRCA1",
+            "BRCA2"
+          ) &
+
+          snv_direction ==
+          "gain" ~
+
+          "POST-gain-SNV",
+
+
+        gene %in%
+          c(
+            "BRCA1",
+            "BRCA2"
+          ) &
+
+          patient %in%
+          brca_adaptation_patients &
+
+          snv_count_Post >
+          snv_count_Pre ~
+
+          "POST-gain-SNV",
+
+
+        snv_count_Pre == 0 &
+
+          snv_count_Post > 0 ~
+
+          "POST-gain-SNV",
+
+
+        snv_count_Pre > 0 &
+
+          snv_count_Post > 0 ~
+
+          "Shared SNV",
+
+
+        gene %in%
+          c(
+            "BRCA1",
+            "BRCA2"
+          ) &
+
+          snv_direction ==
+          "loss" ~
+
+          "POST-loss-SNV",
+
+
+        snv_count_Pre > 0 &
+          snv_count_Post == 0 ~
+
+          "POST-loss-SNV",
+
+
+        cn_num_Pre < cn_num_Post &
+          post_cn_direction == "gain" &
+          is.na(pre_cn_direction) ~
+
+          "POST-CN_gain",
+
+
+        cn_num_Pre > cn_num_Post &
+          post_cn_direction == "loss" &
+          is.na(pre_cn_direction) ~
+
+          "POST-CN_loss",
+
+
+        cn_num_Pre > 2 &
+          cn_num_Post > 2 &
+          pre_cn_direction == "gain" ~
+
+          "Pre-existing CN gain",
+
+
+        cn_num_Pre < 2 &
+          cn_num_Post < 2 &
+          pre_cn_direction == "loss" ~
+
+          "Pre-existing CN loss",
+
+
+        TRUE ~
+
+          "No event"
+
+      )
+
+  )
+
+
+############################################################
+# 13. EVENT COLOURS
+############################################################
+
+event_colours <- c(
+
+  "BRCA reversion" =
+    "#D4B72C",
+
+  "POST-gain-SNV" =
+    "#1F4E8C",
+
+  "POST-CN_gain" =
+    "#009E73",
+
+  "POST-CN_loss" =
+    "#DE6952",
+
+  "POST-loss-SNV" =
+    "#7B3294",
+
+  "Pre-existing CN gain" =
+    "#9CDBD4",
+
+  "Pre-existing CN loss" =
+    "#E6C4C1",
+
+  "Shared SNV" =
+    "#CCCCCA",
+
+  "No event" =
+    "grey95"
+
+)
+
+
+############################################################
+# 14. DYNAMIC GENE ORDER
+############################################################
+
+fixed_top_genes <-
+  c(
+    "BRCA1",
+    "BRCA2",
+    "TP53BP1"
+  )
+
+
+post_event_states <-
+  c(
+    "POST-CN_loss",
+    "POST-CN_gain",
+    "POST-loss-SNV",
+    "POST-gain-SNV"
+  )
+
+
+all_panel_genes <-
+  hrd_fig3 %>%
+
+  filter(
+
+    display_state !=
+      "No event",
+
+    !is.na(gene),
+
+    gene != ""
+
+  ) %>%
+
+  distinct(gene) %>%
+
+  pull(gene)
+
+
+post_event_counts <-
+  hrd_fig3 %>%
+
+  filter(
+
+    gene %in%
+      all_panel_genes,
+
+    display_state %in%
+      post_event_states
+
+  ) %>%
+
+  count(
+
+    gene,
+
+    name =
+      "total_post_events"
+
+  )
+
+
+gene_order_base <-
+  tibble(
+    gene =
+      all_panel_genes
+  ) %>%
+
+  left_join(
+
+    post_event_counts,
+
+    by =
+      "gene"
+
+  ) %>%
+
+  mutate(
+
+    total_post_events =
+      replace_na(
+        total_post_events,
+        0
+      )
+
+  )
+
+
+classifier_order <- c(
+
+  "1.BRCA_associated_adaptive_restoration",
+
+  "2a.HR_bypass",
+
+  "2b.Fork_protection",
+
+  "2c.Drug_target_adaptation",
+
+  "Other"
+
+)
+
+
+ranked_other_genes <-
+  gene_order_base %>%
+
+  filter(
+
+    !gene %in%
+      fixed_top_genes
+
+  ) %>%
+
+  left_join(
+
+    gene_rules,
+
+    by =
+      "gene"
+
+  ) %>%
+
+  mutate(
+
+    classifier_group =
+      ifelse(
+
+        is.na(classifier_group),
+
+        "Other",
+
+        classifier_group
+
+      ),
+
+    classifier_rank =
+      match(
+        classifier_group,
+        classifier_order
+      ),
+
+    classifier_rank =
+      replace_na(
+        classifier_rank,
+        99
+      )
+
+  ) %>%
+
+  arrange(
+
+    desc(total_post_events),
+
+    classifier_rank,
+
+    gene
+
+  ) %>%
+
+  pull(gene)
+
+
+gene_order <-
+  c(
+
+    fixed_top_genes[
+      fixed_top_genes %in%
+        all_panel_genes
+    ],
+
+    ranked_other_genes
+
+  )
+
+
+############################################################
+# 14G. DISPLAY GENE ORDER
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "FINAL DYNAMIC GENE ORDER\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+
+gene_order_check <-
+  gene_order_base %>%
+
+  left_join(
+
+    gene_rules,
+
+    by =
+      "gene"
+
+  ) %>%
+
+  mutate(
+
+    classifier_group =
+      ifelse(
+
+        is.na(classifier_group),
+
+        "Other",
+
+        classifier_group
+
+      )
+
+  ) %>%
+
+  select(
+
+    gene,
+
+    total_post_events,
+
+    classifier_group
+
+  ) %>%
+
+  filter(
+
+    gene %in%
+      gene_order
+
+  ) %>%
+
+  mutate(
+
+    gene_order_position =
+      match(
+        gene,
+        gene_order
+      )
+
+  ) %>%
+
+  arrange(
+    gene_order_position
+  )
+
+
+print(
+  gene_order_check,
+  n = Inf
+)
+
+
+############################################################
+# 15. GLOBAL PATIENT ORDERING FUNCTION
+############################################################
+
+ordering_states <- c(
+
+  "BRCA reversion",
+
+  "POST-CN_loss",
+
+  "POST-CN_gain",
+
+  "POST-loss-SNV",
+
+  "POST-gain-SNV"
+
+)
+
+
+event_priority <- c(
+
+  "BRCA reversion" =
+    1,
+
+  "POST-CN_loss" =
+    2,
+
+  "POST-CN_gain" =
+    3,
+
+  "POST-loss-SNV" =
+    4,
+
+  "POST-gain-SNV" =
+    5
+
+)
+
+
+############################################################
+# 15A. FUNCTION TO ORDER PATIENTS
+############################################################
+
+get_patient_order <- function(
+  patients
+) {
+
+  if (
+    length(patients) == 0
+  ) {
+
+    return(
+      character(0)
+    )
+
+  }
+
+
+  patients <-
+    as.character(
+      patients
+    )
+
+
+  patient_gene_order_data <-
+
+    tidyr::expand_grid(
+
+      patient =
+        patients,
+
+      gene =
+        gene_order
+
+    ) %>%
+
+    left_join(
+
+      hrd_fig3 %>%
+
+        select(
+
+          patient,
+
+          gene,
+
+          display_state
+
+        ),
+
+      by =
+        c(
+          "patient",
+          "gene"
+        )
+
+    ) %>%
+
+    mutate(
+
+      ordering_rank =
+
+        case_when(
+
+          display_state %in%
+            ordering_states ~
+
+            unname(
+              event_priority[
+                display_state
+              ]
+            ),
+
+          TRUE ~
+
+            NA_real_
+
+        )
+
+    )
+
+
+  patient_gene_order_data <-
+
+    patient_gene_order_data %>%
+
+    group_by(
+
+      patient,
+
+      gene
+
+    ) %>%
+
+    summarise(
+
+      ordering_rank =
+
+        if (
+          all(
+            is.na(
+              ordering_rank
+            )
+          )
+        ) {
+
+          NA_real_
+
+        } else {
+
+          min(
+            ordering_rank,
+            na.rm =
+              TRUE
+          )
+
+        },
+
+      .groups =
+        "drop"
+
+    )
+
+
+  patient_order_matrix <-
+
+    patient_gene_order_data %>%
+
+    tidyr::pivot_wider(
+
+      names_from =
+        gene,
+
+      values_from =
+        ordering_rank
+
+    )
+
+
+  for (
+    g in gene_order
+  ) {
+
+    if (
+      !g %in%
+      colnames(
+        patient_order_matrix
+      )
+    ) {
+
+      patient_order_matrix[[g]] <-
+        NA_real_
+
+    }
+
+  }
+
+
+  patient_order_matrix <-
+
+    patient_order_matrix %>%
+
+    mutate(
+
+      original_order =
+        match(
+          patient,
+          patients
+        )
+
+    )
+
+
+  for (
+    g in gene_order
+  ) {
+
+    patient_order_matrix[[g]] <-
+
+      ifelse(
+
+        is.na(
+          patient_order_matrix[[g]]
+        ),
+
+        99,
+
+        patient_order_matrix[[g]]
+
+      )
+
+  }
+
+
+  patient_order_matrix <-
+
+    patient_order_matrix %>%
+
+    arrange(
+
+      !!!lapply(
+
+        gene_order,
+
+        function(g)
+          rlang::sym(g)
+
+      ),
+
+      original_order
+
+    )
+
+
+  patient_order_matrix$patient
+
+}
+
+
+############################################################
+# 16. PATIENT ARCHITECTURE / BRCA CONTEXT
+############################################################
+
+patient_architecture <-
+  hrd_status_wide %>%
+
+  distinct(
+
+    patient,
+
+    BRCA_context,
+
+    final_classifier,
+
+    PRA_high_confidence
+
+  ) %>%
+
+  mutate(
+
+    BRCA_context_display =
+
+      case_when(
+
+        BRCA_context ==
+          "1a.BRCA_germline" ~
+
+          "BRCA_germline",
+
+        BRCA_context ==
+          "1b.BRCA_shared_pre_post" ~
+
+          "BRCA somatic",
+
+        BRCA_context ==
+          "2.BRCA_CN_altered_Pre" ~
+
+          "BRCAwt",
+
+        BRCA_context ==
+          "3.No_BRCA_event" ~
+
+          "BRCAwt",
+
+        TRUE ~
+
+          "BRCAwt"
+
+      ),
+
+    BRCA_group =
+
+      case_when(
+
+        BRCA_context %in%
+          c(
+            "1a.BRCA_germline",
+            "1b.BRCA_shared_pre_post"
+          ) ~
+
+          "BRCA context",
+
+        TRUE ~
+
+          "BRCAwt"
+
+      ),
+
+    BRCA_status =
+
+      case_when(
+
+        BRCA_context %in%
+          c(
+            "1a.BRCA_germline",
+            "1b.BRCA_shared_pre_post"
+          ) ~
+
+          "BRCAm",
+
+        TRUE ~
+
+          "BRCAwt"
+
+      ),
+
+    PRA_status =
+
+      case_when(
+
+        PRA_high_confidence ==
+          "TRUE" ~
+
+          "PRA",
+
+        TRUE ~
+
+          "No PRA"
+
+      ),
+
+    resistance_class =
+
+      case_when(
+
+        final_classifier ==
+          "1.BRCA_associated_adaptive_restoration" ~
+
+          "BRCA associated",
+
+        final_classifier ==
+          "2a.HR_bypass" ~
+
+          "HR bypass",
+
+        final_classifier ==
+          "2b.Fork_protection" ~
+
+          "Fork protection",
+
+        final_classifier ==
+          "2c.Drug_target_adaptation" ~
+
+          "Drug target",
+
+        TRUE ~
+
+          "No clear evidence"
+
+      )
+
+  )
+
+
+############################################################
+# 17. CHECK BRCA CONTEXT COUNTS
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "BRCA CONTEXT COUNTS\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+print(
+  patient_architecture %>%
+    count(
+      BRCA_context,
+      BRCA_context_display,
+      BRCA_group
+    )
+)
+
+
+############################################################
+# 18. SPLIT PATIENT SETS
+############################################################
+
+brca_context_patients <-
+  patient_architecture %>%
+
+  filter(
+    BRCA_group ==
+      "BRCA context"
+  ) %>%
+
+  pull(patient) %>%
+
+  unique() %>%
+
+  as.character()
+
+
+brcawt_patients <-
+  patient_architecture %>%
+
+  filter(
+    BRCA_group ==
+      "BRCAwt"
+  ) %>%
+
+  pull(patient) %>%
+
+  unique() %>%
+
+  as.character()
+
+
+############################################################
+# 19. PATIENT ORDER — BRCA CONTEXT
+############################################################
+
+patient_order_brca <-
+  get_patient_order(
+    brca_context_patients
+  )
+
+
+############################################################
+# 20. PATIENT ORDER — BRCAwt
+############################################################
+
+patient_order_wt <-
+  get_patient_order(
+    brcawt_patients
+  )
+
+
+############################################################
+# 21. DISPLAY PATIENT ORDERS
+############################################################
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "BRCA CONTEXT PATIENT ORDER\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+print(
+  patient_order_brca
+)
+
+
+cat(
+  "\n========================================\n"
+)
+
+cat(
+  "BRCAwt PATIENT ORDER\n"
+)
+
+cat(
+  "========================================\n"
+)
+
+print(
+  patient_order_wt
+)
+
+
+############################################################
+# 22. PANEL A DATA FUNCTION
+############################################################
+
+make_panel_A_data <- function(
+  patient_order
+) {
+
+  tidyr::expand_grid(
+
+    patient =
+      patient_order,
+
+    gene =
+      gene_order
+
+  ) %>%
+
+    left_join(
+
+      hrd_fig3 %>%
+
+        select(
+
+          patient,
+
+          gene,
+
+          display_state
+
+        ),
+
+      by =
+        c(
+          "patient",
+          "gene"
+        )
+
+    ) %>%
+
+    mutate(
+
+      display_state =
+        replace_na(
+          display_state,
+          "No event"
+        )
+
+    )
+
+}
+
+
+panel_A_brca <-
+  make_panel_A_data(
+    patient_order_brca
+  )
+
+
+panel_A_wt <-
+  make_panel_A_data(
+    patient_order_wt
+  )
+
+
+############################################################
+# 23. GENE SUMMARY FUNCTION
+############################################################
+
+make_gene_summary <- function(
+  panel_data,
+  n_patients
+) {
+
+  if (
+    n_patients == 0
+  ) {
+
+    return(
+      tibble::tibble(
+        gene =
+          character(0),
+        display_state =
+          character(0),
+        n =
+          numeric(0),
+        percent =
+          numeric(0)
+      )
+    )
+
+  }
+
+
+  panel_data %>%
+
+    count(
+
+      gene,
+
+      display_state,
+
+      name =
+        "n"
+
+    ) %>%
+
+    complete(
+
+      gene =
+        gene_order,
+
+      display_state =
+        names(event_colours),
+
+      fill =
+        list(
+          n = 0
+        )
+
+    ) %>%
+
+    filter(
+
+      display_state !=
+        "No event"
+
+    ) %>%
+
+    mutate(
+
+      percent =
+        100 * n /
+        n_patients
+
+    )
+
+}
+
+
+gene_summary_brca <-
+  make_gene_summary(
+
+    panel_A_brca,
+
+    length(
+      patient_order_brca
+    )
+
+  )
+
+
+gene_summary_wt <-
+  make_gene_summary(
+
+    panel_A_wt,
+
+    length(
+      patient_order_wt
+    )
+
+  )
+
+
+############################################################
+# 24. RESISTANCE COLOURS
+############################################################
+
+resistance_colours <- c(
+  "BRCA assoc." = "#E3E198",
+  "HR bypass"   = "#BC5090",
+  "Fork prot."  = "#8A7A44",
+  "Drug target" = "#5F6B6D",
+  "No clear"    = "grey90"
+)
+
+
+############################################################
+# 25. PRA COLOURS
+############################################################
+
+pra_colours <- c(
+
+  "PRA" =
+    "#D55E00",
+
+  "No PRA" =
+    "grey90"
+
+)
+
+
+############################################################
+# 26. BRCA CONTEXT COLOURS
+############################################################
+
+brca_context_colours <- c(
+
+  "BRCA_germline" =
+    "#0072B2",
+
+  "BRCA somatic" =
+    "#56B4E9",
+
+  "BRCAwt" =
+    "grey90"
+
+)
+
+
+############################################################
+# 27. COMBINED PANEL A COLOURS
+############################################################
+
+combined_colours <- c(
+
+  event_colours,
+
+  resistance_colours,
+
+  pra_colours,
+
+  brca_context_colours,
+
+  "Spacer" =
+    "white"
+
+)
+
+
+############################################################
+# 28. PANEL A FULL DATA FUNCTION
+#
+# IMPORTANT:
+#   Build annotation rows explicitly.
+#
+#   This guarantees:
+#     BRCA_context
+#     PRA
+#     Resistance
+#
+#   are actual rows in the plotting data and cannot be
+#   dropped during a later join.
+############################################################
+
+make_panel_A_full <- function(
+  panel_data,
+  patient_order
+) {
+
+  annotation_data <-
+
+    patient_architecture %>%
+
+    filter(
+      patient %in%
+        patient_order
+    ) %>%
+
+    select(
+
+      patient,
+
+      PRA_status,
+
+      BRCA_context_display,
+
+      resistance_class
+
+    ) %>%
+
+    distinct(
+      patient,
+      .keep_all = TRUE
+    )
+
+
+  gene_data <-
+
+    panel_data %>%
+
+    mutate(
+
+      panel_row =
+        as.character(gene)
+
+    ) %>%
+
+    select(
+
+      patient,
+
+      panel_row,
+
+      display_state
+
+    )
+
+
+  annotation_long <-
+
+    tidyr::expand_grid(
+
+      patient =
+        patient_order,
+
+      panel_row =
+
+        c(
+
+          "Resistance",
+
+          "PRA",
+
+          "BRCA_context"
+
+        )
+
+    ) %>%
+
+    left_join(
+
+      annotation_data,
+
+      by =
+        "patient"
+
+    ) %>%
+
+    mutate(
+
+      display_state =
+
+        case_when(
+
+          panel_row ==
+            "PRA" ~
+
+            PRA_status,
+
+          panel_row ==
+            "BRCA_context" ~
+
+            BRCA_context_display,
+
+          panel_row ==
+            "Resistance" ~
+
+            case_when(
+
+              resistance_class ==
+                "BRCA associated" ~
+
+                "BRCA assoc.",
+
+              resistance_class ==
+                "HR bypass" ~
+
+                "HR bypass",
+
+              resistance_class ==
+                "Fork protection" ~
+
+                "Fork prot.",
+
+              resistance_class ==
+                "Drug target" ~
+
+                "Drug target",
+
+              TRUE ~
+
+                "No clear"
+
+            ),
+
+          TRUE ~
+
+            NA_character_
+
+        ),
+
+      row_type =
+
+        case_when(
+
+          panel_row ==
+            "Resistance" ~
+
+            "Resistance",
+
+          panel_row ==
+            "PRA" ~
+
+            "PRA",
+
+          panel_row ==
+            "BRCA_context" ~
+
+            "BRCA_context",
+
+          TRUE ~
+
+            "Annotation"
+
+        )
+
+    ) %>%
+
+    select(
+
+      patient,
+
+      panel_row,
+
+      display_state,
+
+      row_type
+
+    )
+
+
+  spacer_data <-
+
+    tidyr::expand_grid(
+
+      patient =
+        patient_order,
+
+      panel_row =
+        c(
+          "Spacer1",
+          "Spacer2"
+        )
+
+    ) %>%
+
+    mutate(
+
+      display_state =
+        NA_character_,
+
+      row_type =
+        "Spacer"
+
+    )
+
+
+  gene_data <-
+
+    gene_data %>%
+
+    mutate(
+
+      row_type =
+        "Gene"
+
+    )
+
+
+  bind_rows(
+
+    gene_data,
+
+    annotation_long,
+
+    spacer_data
+
+  ) %>%
+
+    mutate(
+
+      panel_row =
+        factor(
+
+          panel_row,
+
+          levels =
+            panel_A_row_order
+
+        )
+
+    ) %>%
+
+    arrange(
+
+      patient,
+
+      panel_row
+
+    )
+
+}
+
+
+############################################################
+# 29. PANEL A ROW ORDER
+#
+# THIS IS THE SINGLE MASTER ROW SYSTEM USED BY BOTH
+# THE HEATMAP AND THE COHORT SUMMARY PLOT.
+############################################################
+
+panel_A_row_order <-
+  c(
+
+    "BRCA_context",
+
+    "PRA",
+
+    "Resistance",
+
+    "Spacer2",
+
+    "Spacer1",
+
+    rev(
+      gene_order
+    )
+
+  )
+
+
+############################################################
+# BUILD FULL PANEL DATA
+############################################################
+
+panel_A_full_brca <-
+  make_panel_A_full(
+
+    panel_A_brca,
+
+    patient_order_brca
+
+  )
+
+
+panel_A_full_wt <-
+  make_panel_A_full(
+
+    panel_A_wt,
+
+    patient_order_wt
+
+  )
+
+
+############################################################
+# 30. PANEL A HEATMAP FUNCTION
+############################################################
+
+make_panel_A_heatmap <- function(
+  panel_data,
+  patient_order,
+  panel_title
+) {
+
+  panel_data <-
+    panel_data %>%
+
+    mutate(
+
+      patient =
+        factor(
+          patient,
+          levels =
+            patient_order
+        ),
+
+      panel_row =
+        factor(
+          panel_row,
+          levels =
+            panel_A_row_order
+        ),
+
+      display_state =
+        factor(
+          display_state,
+          levels =
+            names(
+              combined_colours
+            )
+        )
+
+    )
+
+
+  ggplot(
+
+    panel_data,
+
+    aes(
+
+      x =
+        patient,
+
+      y =
+        panel_row,
+
+      fill =
+        display_state
+
+    )
+
+  ) +
+
+    geom_tile(
+
+      colour =
+        "white",
+
+      linewidth =
+        0.15
+
+    ) +
+
+    scale_fill_manual(
+
+      values =
+        combined_colours,
+
+      drop =
+        FALSE,
+
+      na.value =
+        "white",
+
+      name =
+        NULL
+
+    ) +
+
+    scale_x_discrete(
+
+      limits =
+        patient_order,
+
+      position =
+        "top",
+
+      drop =
+        FALSE
+
+    ) +
+
+    scale_y_discrete(
+
+      limits =
+        panel_A_row_order,
+
+      drop =
+        FALSE
+
+    ) +
+
+    labs(
+
+      x =
+        NULL,
+
+      y =
+        NULL,
+
+      title =
+        panel_title
+
+    ) +
+
+    theme_minimal(
+
+      base_size =
+        9
+
+    ) +
+
+    theme(
+
+      panel.grid =
+        element_blank(),
+
+      axis.text.x =
+        element_text(
+
+          angle =
+            90,
+
+          vjust =
+            0.5,
+
+          hjust =
+            0,
+
+          size =
+            6
+
+        ),
+
+      axis.text.y =
+        element_text(
+
+          size =
+            8
+
+        ),
+
+      axis.ticks =
+        element_blank(),
+
+      legend.position =
+        "bottom",
+
+      legend.text =
+        element_text(
+
+          size =
+            7
+
+        ),
+
+      plot.title =
+        element_text(
+
+          face =
+            "bold",
+
+          size =
+            10
+
+        ),
+
+      plot.margin =
+        margin(
+          5,
+          5,
+          5,
+          2
+        )
+
+    )
+
+}
+
+
+############################################################
+# 31. PANEL A HEATMAPS
+############################################################
+
+pA_heatmap_brca <-
+  make_panel_A_heatmap(
+
+    panel_A_full_brca,
+
+    patient_order_brca,
+
+    "BRCA context"
+
+  )
+
+
+pA_heatmap_wt <-
+  make_panel_A_heatmap(
+
+    panel_A_full_wt,
+
+    patient_order_wt,
+
+    "BRCAwt"
+
+  )
+
+
+############################################################
+# 32. SUMMARY BAR FUNCTION
+#
+# MAJOR FIX:
+#
+# The summary plot now uses EXACTLY the same
+# panel_A_row_order as the heatmap.
+#
+# The annotation and spacer rows are included in the
+# y-axis but contain zero-width/blank bars.
+#
+# Therefore the gene bars occupy precisely the same
+# vertical coordinates as the gene tiles.
+############################################################
+
+make_summary_plot <- function(
+  gene_summary,
+  n_patients
+) {
+
+  if (
+    n_patients == 0
+  ) {
+
+    summary_data <-
+      tibble(
+
+        panel_row =
+          factor(
+            panel_A_row_order,
+            levels =
+              panel_A_row_order
+          ),
+
+        percent =
+          0,
+
+        display_state =
+          NA_character_
+
+      )
+
+  } else {
+
+    summary_gene_data <-
+
+      gene_summary %>%
+
+      mutate(
+
+        panel_row =
+          as.character(gene)
+
+      ) %>%
+
+      select(
+
+        panel_row,
+
+        display_state,
+
+        percent
+
+      )
+
+
+    ######################################################
+    # Explicitly create every row in the SAME order as
+    # the heatmap.
+    ######################################################
+
+    summary_data <-
+
+      tidyr::expand_grid(
+
+        panel_row =
+          panel_A_row_order,
+
+        display_state =
+          names(event_colours)
+
+      ) %>%
+
+      left_join(
+
+        summary_gene_data,
+
+        by =
+          c(
+            "panel_row",
+            "display_state"
+          )
+
+      ) %>%
+
+      mutate(
+
+        percent =
+          replace_na(
+            percent,
+            0
+          ),
+
+        is_gene =
+          panel_row %in%
+          gene_order
+
+      )
+
+  }
+
+
+  ggplot(
+
+    summary_data,
+
+    aes(
+
+      x =
+        percent,
+
+      y =
+        factor(
+          panel_row,
+          levels =
+            panel_A_row_order
+        ),
+
+      fill =
+        display_state
+
+    )
+
+  ) +
+
+    geom_col(
+
+      data =
+        summary_data %>%
+
+        filter(
+          is_gene
+        ),
+
+      width =
+        0.70,
+
+      colour =
+        "white",
+
+      linewidth =
+        0.2,
+
+      position =
+        "stack"
+
+    ) +
+
+    scale_fill_manual(
+
+      values =
+        event_colours,
+
+      drop =
+        TRUE,
+
+      name =
+        NULL
+
+    ) +
+
+    scale_x_reverse(
+
+      limits =
+        c(
+          100,
+          0
+        ),
+
+      breaks =
+        c(
+          100,
+          75,
+          50,
+          25,
+          0
+        ),
+
+      labels =
+        function(x)
+          paste0(
+            x,
+            "%"
+          ),
+
+      expand =
+        c(
+          0,
+          0
+        )
+
+    ) +
+
+    scale_y_discrete(
+
+      limits =
+        panel_A_row_order,
+
+      drop =
+        FALSE
+
+    ) +
+
+    labs(
+
+      title =
+        "Cohort",
+
+      x =
+        "% of patients",
+
+      y =
+        NULL
+
+    ) +
+
+    theme_minimal(
+
+      base_size =
+        9
+
+    ) +
+
+    theme(
+
+      panel.grid.major.y =
+        element_blank(),
+
+      panel.grid.minor =
+        element_blank(),
+
+      axis.text.y =
+        element_blank(),
+
+      axis.ticks.y =
+        element_blank(),
+
+      axis.text.x =
+        element_text(
+
+          size =
+            7
+
+        ),
+
+      axis.title.x =
+        element_text(
+
+          size =
+            8
+
+        ),
+
+      plot.title =
+        element_text(
+
+          face =
+            "bold",
+
+          size =
+            10
+
+        ),
+
+      legend.position =
+        "none",
+
+      plot.margin =
+        margin(
+          5,
+          5,
+          5,
+          5
+        )
+
+    )
+
+}
+
+
+############################################################
+# 33. SUMMARY PLOTS
+############################################################
+
+pA_summary_brca <-
+  make_summary_plot(
+
+    gene_summary_brca,
+
+    length(
+      patient_order_brca
+    )
+
+  )
+
+
+pA_summary_wt <-
+  make_summary_plot(
+
+    gene_summary_wt,
+
+    length(
+      patient_order_wt
+    )
+
+  )
+
+
+############################################################
+# 34. COMBINE EACH PANEL A HALF
+#
+# BOTH PLOTS NOW HAVE THE SAME NUMBER AND ORDER OF
+# Y-AXIS ROWS.
+############################################################
+
+pA_brca <-
+  patchwork::wrap_plots(
+
+    pA_summary_brca,
+
+    pA_heatmap_brca,
+
+    ncol =
+      2,
+
+    widths =
+      c(
+        1.15,
+        4.5
+      ),
+
+    heights =
+      1
+
+  )
+
+
+pA_wt <-
+  patchwork::wrap_plots(
+
+    pA_summary_wt,
+
+    pA_heatmap_wt,
+
+    ncol =
+      2,
+
+    widths =
+      c(
+        1.15,
+        4.5
+      ),
+
+    heights =
+      1
+
+  )
+
+
+############################################################
+# 35. SIDE-BY-SIDE PANEL A
+############################################################
+
+pA_split <-
+  patchwork::wrap_plots(
+
+    pA_brca,
+
+    pA_wt,
+
+    ncol =
+      2,
+
+    widths =
+      c(
+        1,
+        1
+      )
+
+  )
+
+
+############################################################
+# 36. PATIENT ARCHITECTURE — FULL COHORT
+############################################################
+
+patient_architecture_full <-
+  patient_architecture %>%
+
+  mutate(
+
+    BRCA_status =
+
+      case_when(
+
+        BRCA_context %in%
+          c(
+            "1a.BRCA_germline",
+            "1b.BRCA_shared_pre_post"
+          ) ~
+
+          "BRCAm",
+
+        TRUE ~
+
+          "BRCAwt"
+
+      )
+
+  )
+
+
+############################################################
+# 37. ARCHITECTURE COLOURS
+############################################################
+
+architecture_colours <- c(
+
+  "PRA" =
+    "#D55E00",
+
+  "No PRA" =
+    "grey90",
+
+  "BRCAm" =
+    "#0072B2",
+
+  "BRCAwt" =
+    "grey90",
+
+  "BRCA associated" =
+    "#D4B72C",
+
+  "HR bypass" =
+    "#56B4E9",
+
+  "Fork protection" =
+    "#009E73",
+
+  "Drug target" =
+    "#E69F00",
+
+  "No clear evidence" =
+    "grey90"
+
+)
+
+
+############################################################
+# 38. FULL COHORT PATIENT ORDER FOR B/C/D
+############################################################
+
+patient_order_full <-
+  get_patient_order(
+    final_patients
+  )
+
+
+############################################################
+# 39. PANEL B DATA
+############################################################
+
+architecture_long <-
+  patient_architecture_full %>%
+
+  select(
+
+    patient,
+
+    PRA_status,
+
+    BRCA_status,
+
+    resistance_class
+
+  ) %>%
+
+  pivot_longer(
+
+    cols =
+      c(
+        PRA_status,
+        BRCA_status,
+        resistance_class
+      ),
+
+    names_to =
+      "architecture",
+
+    values_to =
+      "state"
+
+  ) %>%
+
+  mutate(
+
+    patient =
+      factor(
+        patient,
+        levels =
+          patient_order_full
+      ),
+
+    architecture =
+      factor(
+
+        architecture,
+
+        levels =
+          c(
+            "PRA_status",
+            "BRCA_status",
+            "resistance_class"
+          )
+
+      )
+
+  )
+
+
+############################################################
+# 40. PANEL B
+############################################################
+
+pB <-
+  ggplot(
+
+    architecture_long,
+
+    aes(
+
+      x =
+        patient,
+
+      y =
+        architecture,
+
+      fill =
+        state
+
+    )
+
+  ) +
+
+  geom_tile(
+
+    colour =
+      "white",
+
+    linewidth =
+      0.15
+
+  ) +
+
+  scale_fill_manual(
+
+    values =
+      architecture_colours,
+
+    drop =
+      TRUE,
+
+    name =
+      NULL
+
+  ) +
+
+  scale_x_discrete(
+
+    limits =
+      patient_order_full,
+
+    drop =
+      FALSE
+
+  ) +
+
+  scale_y_discrete(
+
+    labels =
+      c(
+
+        "PRA_status" =
+          "PRA",
+
+        "BRCA_status" =
+          "BRCA",
+
+        "resistance_class" =
+          "Resistance"
+
+      )
+
+  ) +
+
+  theme_minimal(
+
+    base_size =
+      9
+
+  ) +
+
+  theme(
+
+    panel.grid =
+      element_blank(),
+
+    axis.text.x =
+      element_blank(),
+
+    axis.ticks =
+      element_blank(),
+
+    axis.title =
+      element_blank(),
+
+    legend.position =
+      "none"
+
+  )
+
+
+############################################################
+# 41. PANEL C
+############################################################
+
+pC_data <-
+  patient_architecture_full %>%
+
+  count(
+
+    BRCA_status,
+
+    resistance_class
+
+  ) %>%
+
+  group_by(
+    BRCA_status
+  ) %>%
+
+  mutate(
+
+    percent =
+      100 * n /
+      sum(n)
+
+  ) %>%
+
+  ungroup()
+
+
+pC <-
+  ggplot(
+
+    pC_data,
+
+    aes(
+
+      x =
+        BRCA_status,
+
+      y =
+        percent,
+
+      fill =
+        resistance_class
+
+    )
+
+  ) +
+
+  geom_col(
+
+    width =
+      0.65,
+
+    colour =
+      "white",
+
+    linewidth =
+      0.2
+
+  ) +
+
+  scale_fill_manual(
+
+    values =
+      architecture_colours,
+
+    drop =
+      TRUE,
+
+    name =
+      NULL
+
+  ) +
+
+  scale_y_continuous(
+
+    limits =
+      c(
+        0,
+        100
+      ),
+
+    breaks =
+      c(
+        0,
+        25,
+        50,
+        75,
+        100
+      ),
+
+    labels =
+      function(x)
+        paste0(
+          x,
+          "%"
+        ),
+
+    expand =
+      c(
+        0,
+        0
+      )
+
+  ) +
+
+  labs(
+
+    x =
+      NULL,
+
+    y =
+      "% of patients"
+
+  ) +
+
+  theme_minimal(
+
+    base_size =
+      9
+
+  ) +
+
+  theme(
+
+    panel.grid.minor =
+      element_blank(),
+
+    legend.position =
+      "none"
+
+  )
+
+
+############################################################
+# 42. PANEL D
+############################################################
+
+pD_data <-
+  patient_architecture_full %>%
+
+  count(
+
+    PRA_status,
+
+    resistance_class
+
+  ) %>%
+
+  group_by(
+    PRA_status
+  ) %>%
+
+  mutate(
+
+    percent =
+      100 * n /
+      sum(n)
+
+  ) %>%
+
+  ungroup()
+
+
+pD <-
+  ggplot(
+
+    pD_data,
+
+    aes(
+
+      x =
+        PRA_status,
+
+      y =
+        percent,
+
+      fill =
+        resistance_class
+
+    )
+
+  ) +
+
+  geom_col(
+
+    width =
+      0.65,
+
+    colour =
+      "white",
+
+    linewidth =
+      0.2
+
+  ) +
+
+  scale_fill_manual(
+
+    values =
+      architecture_colours,
+
+    drop =
+      TRUE,
+
+    name =
+      NULL
+
+  ) +
+
+  scale_y_continuous(
+
+    limits =
+      c(
+        0,
+        100
+      ),
+
+    breaks =
+      c(
+        0,
+        25,
+        50,
+        75,
+        100
+      ),
+
+    labels =
+      function(x)
+        paste0(
+          x,
+          "%"
+        ),
+
+    expand =
+      c(
+        0,
+        0
+      )
+
+  ) +
+
+  labs(
+
+    x =
+      NULL,
+
+    y =
+      "% of patients"
+
+  ) +
+
+  theme_minimal(
+
+    base_size =
+      9
+
+  ) +
+
+  theme(
+
+    panel.grid.minor =
+      element_blank(),
+
+    legend.position =
+      "none"
+
+  )
+
+
+############################################################
+# 43. BOTTOM PANELS
+############################################################
+
+pCD <-
+  patchwork::wrap_plots(
+
+    pC,
+
+    pD,
+
+    ncol =
+      2
+
+  )
+
+
+bottom_panels <-
+  patchwork::wrap_plots(
+
+    pB,
+
+    pCD,
+
+    ncol =
+      1,
+
+    heights =
+      c(
+        1,
+        1
+      )
+
+  )
+
+
+############################################################
 # 44. FINAL FIGURE 3
 ############################################################
 

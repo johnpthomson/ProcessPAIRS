@@ -1,0 +1,1072 @@
+# ============================================================
+# PAIRS: Clonal tracking plots
+# BRCAm + BRCAwt
+#
+# Three plots:
+#   1. Unchanged
+#   2. Clonal expansion
+#   3. Clonal shrinkage
+#
+# Trajectories:
+#   gDNA = 1
+#   Pre  = inferred VAF cluster count
+#   Post = inferred VAF cluster count
+#
+# Endpoint bars:
+#   TRUE Post values
+#   stacked by BRCAm / BRCAwt
+#
+# All three output images have IDENTICAL dimensions.
+# Each plot has its own appropriate Y-axis range.
+# ============================================================
+
+
+# ------------------------------------------------------------
+# Packages
+# ------------------------------------------------------------
+
+packages <- c(
+  "readr",
+  "dplyr",
+  "tidyr",
+  "ggplot2"
+)
+
+for (pkg in packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+}
+
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+
+# ------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------
+
+out_dir <- file.path(
+  "C:/Users/jthoms24/Documents/John_work/PAIRS/maf",
+  "PAIRS_PrePost_oncoplots"
+)
+
+brcam_file <- file.path(
+  out_dir,
+  "BRCAm_clonal_evolution_summary.csv"
+)
+
+brcawt_file <- file.path(
+  out_dir,
+  "BRCAwt_clonal_evolution_summary.csv"
+)
+
+dir.create(
+  out_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+
+# ------------------------------------------------------------
+# Read summary files
+# ------------------------------------------------------------
+
+read_summary <- function(file, group_name) {
+
+  if (!file.exists(file)) {
+    stop("Input file not found: ", file)
+  }
+
+  dat <- read_csv(
+    file,
+    show_col_types = FALSE
+  )
+
+  required_cols <- c(
+    "patient",
+    "Pre",
+    "Post",
+    "Evolution"
+  )
+
+  missing_cols <- setdiff(
+    required_cols,
+    names(dat)
+  )
+
+  if (length(missing_cols) > 0) {
+    stop(
+      "Missing columns in ",
+      basename(file),
+      ": ",
+      paste(missing_cols, collapse = ", ")
+    )
+  }
+
+  dat %>%
+    transmute(
+      patient = as.character(patient),
+      Pre = as.integer(
+        round(as.numeric(Pre))
+      ),
+      Post = as.integer(
+        round(as.numeric(Post))
+      ),
+      Evolution = trimws(
+        as.character(Evolution)
+      ),
+      Group = group_name,
+      gDNA = 1
+    )
+}
+
+
+# ------------------------------------------------------------
+# Combine datasets
+# ------------------------------------------------------------
+
+combined <- bind_rows(
+  read_summary(
+    brcam_file,
+    "BRCAm"
+  ),
+  read_summary(
+    brcawt_file,
+    "BRCAwt"
+  )
+) %>%
+  filter(
+    !is.na(patient),
+    !is.na(Pre),
+    !is.na(Post),
+    !is.na(Evolution)
+  ) %>%
+  mutate(
+    Group = factor(
+      Group,
+      levels = c(
+        "BRCAm",
+        "BRCAwt"
+      )
+    )
+  )
+
+
+# ------------------------------------------------------------
+# Evolution categories
+# ------------------------------------------------------------
+
+allowed_categories <- c(
+  "Unchanged",
+  "Clonal expansion",
+  "Clonal shrinkage"
+)
+
+unexpected_categories <- setdiff(
+  unique(combined$Evolution),
+  allowed_categories
+)
+
+if (length(unexpected_categories) > 0) {
+
+  warning(
+    "Unexpected evolution categories detected: ",
+    paste(
+      unexpected_categories,
+      collapse = ", "
+    )
+  )
+}
+
+
+# ------------------------------------------------------------
+# Colours
+# ------------------------------------------------------------
+
+group_colours <- c(
+  "BRCAm" = "#0072B2",
+  "BRCAwt" = "#D55E00"
+)
+
+
+# ------------------------------------------------------------
+# Summary
+# ------------------------------------------------------------
+
+print(
+  combined %>%
+    count(
+      Evolution,
+      Group,
+      name = "Patients"
+    ) %>%
+    arrange(
+      factor(
+        Evolution,
+        levels = allowed_categories
+      ),
+      Group
+    )
+)
+
+
+# ------------------------------------------------------------
+# Global endpoint range
+#
+# Used to ensure the right-hand endpoint area has the same
+# physical width across all three plots.
+# ------------------------------------------------------------
+
+all_endpoint_counts <- combined %>%
+  filter(
+    Evolution %in% allowed_categories
+  ) %>%
+  count(
+    Evolution,
+    Post,
+    Group,
+    name = "Patients"
+  ) %>%
+  complete(
+    Evolution = allowed_categories,
+    Post = seq(
+      min(
+        combined$Post,
+        na.rm = TRUE
+      ),
+      max(
+        combined$Post,
+        na.rm = TRUE
+      ),
+      by = 1
+    ),
+    Group = factor(
+      c(
+        "BRCAm",
+        "BRCAwt"
+      ),
+      levels = c(
+        "BRCAm",
+        "BRCAwt"
+      )
+    ),
+    fill = list(
+      Patients = 0
+    )
+  )
+
+
+# Maximum number of patients ending at any one Post cluster
+max_endpoint_total <- all_endpoint_counts %>%
+  group_by(
+    Evolution,
+    Post
+  ) %>%
+  summarise(
+    total = sum(Patients),
+    .groups = "drop"
+  ) %>%
+  summarise(
+    max_total = max(
+      total,
+      na.rm = TRUE
+    )
+  ) %>%
+  pull(max_total)
+
+
+# ------------------------------------------------------------
+# Fixed X geometry
+# ------------------------------------------------------------
+
+gDNA_x <- 1
+Pre_x  <- 3
+Post_x <- 5
+
+# Endpoint plot starts here
+bar_start <- 6.0
+
+# Width represented by one patient
+endpoint_scale <- 0.50
+
+fixed_bar_width <- (
+  max_endpoint_total + 1
+) * endpoint_scale
+
+fixed_x_max <- (
+  bar_start + fixed_bar_width
+)
+
+
+# ------------------------------------------------------------
+# FIXED IMAGE SIZE
+#
+# These are deliberately identical for all three plots.
+# ------------------------------------------------------------
+
+plot_width <- 12
+plot_height <- 4.5
+
+
+# ------------------------------------------------------------
+# Function to determine Y-axis for each category
+# ------------------------------------------------------------
+
+get_category_y_limits <- function(dat) {
+
+  ymax <- max(
+    c(
+      dat$Pre,
+      dat$Post,
+      1
+    ),
+    na.rm = TRUE
+  )
+
+  ymin <- min(
+    c(
+      dat$Pre,
+      dat$Post,
+      1
+    ),
+    na.rm = TRUE
+  )
+
+  # Whole-number limits with a little visual breathing room
+  lower <- max(
+    0.5,
+    ymin - 0.5
+  )
+
+  upper <- ymax + 0.5
+
+  list(
+    limits = c(
+      lower,
+      upper
+    ),
+    breaks = seq(
+      ceiling(lower),
+      floor(upper),
+      by = 1
+    )
+  )
+}
+
+
+# ------------------------------------------------------------
+# Main plotting function
+# ------------------------------------------------------------
+
+plot_evolution <- function(
+  category,
+  file_stub
+) {
+
+  # ----------------------------------------------------------
+  # Select category
+  # ----------------------------------------------------------
+
+  dat <- combined %>%
+    filter(
+      Evolution == category
+    )
+
+  if (nrow(dat) == 0) {
+
+    message(
+      "No patients for category: ",
+      category
+    )
+
+    return(NULL)
+  }
+
+
+  # ----------------------------------------------------------
+  # Category-specific Y-axis
+  # ----------------------------------------------------------
+
+  y_info <- get_category_y_limits(
+    dat
+  )
+
+  y_limits <- y_info$limits
+  y_breaks <- y_info$breaks
+
+
+  # ----------------------------------------------------------
+  # Patient ordering
+  # ----------------------------------------------------------
+
+  dat <- dat %>%
+    arrange(
+      Post,
+      Pre,
+      Group,
+      patient
+    ) %>%
+    mutate(
+      patient_key = paste(
+        Group,
+        patient,
+        sep = " | "
+      )
+    )
+
+
+  # ----------------------------------------------------------
+  # Stagger identical Pre -> Post paths
+  #
+  # IMPORTANT:
+  # Staggering is performed across BOTH groups together.
+  # ----------------------------------------------------------
+
+  dat <- dat %>%
+    group_by(
+      Pre,
+      Post
+    ) %>%
+    arrange(
+      Group,
+      patient,
+      .by_group = TRUE
+    ) %>%
+    mutate(
+      n_same_trajectory = n(),
+
+      trajectory_index = row_number(),
+
+      offset = (
+        trajectory_index -
+          (n_same_trajectory + 1) / 2
+      ) * 0.06
+    ) %>%
+    ungroup() %>%
+    mutate(
+      Pre_plot = Pre + offset,
+      Post_plot = Post + offset
+    )
+
+
+  # ----------------------------------------------------------
+  # Trajectory data
+  # ----------------------------------------------------------
+
+  line_data <- bind_rows(
+
+    dat %>%
+      transmute(
+        patient,
+        patient_key,
+        Group,
+        Timepoint = "gDNA",
+        x = gDNA_x,
+        Clusters_plot = 1
+      ),
+
+    dat %>%
+      transmute(
+        patient,
+        patient_key,
+        Group,
+        Timepoint = "Pre",
+        x = Pre_x,
+        Clusters_plot = Pre_plot
+      ),
+
+    dat %>%
+      transmute(
+        patient,
+        patient_key,
+        Group,
+        Timepoint = "Post",
+        x = Post_x,
+        Clusters_plot = Post_plot
+      )
+  )
+
+
+  # ----------------------------------------------------------
+  # TRUE endpoint counts
+  # ----------------------------------------------------------
+
+  endpoint_counts <- dat %>%
+    count(
+      Post,
+      Group,
+      name = "Patients"
+    ) %>%
+    complete(
+      Post = seq(
+        min(
+          combined$Post,
+          na.rm = TRUE
+        ),
+        max(
+          combined$Post,
+          na.rm = TRUE
+        ),
+        by = 1
+      ),
+      Group = factor(
+        c(
+          "BRCAm",
+          "BRCAwt"
+        ),
+        levels = c(
+          "BRCAm",
+          "BRCAwt"
+        )
+      ),
+      fill = list(
+        Patients = 0
+      )
+    ) %>%
+    arrange(
+      Post,
+      Group
+    )
+
+
+  # ----------------------------------------------------------
+  # Endpoint stacked bars
+  # ----------------------------------------------------------
+
+  endpoint_bars <- endpoint_counts %>%
+    group_by(
+      Post
+    ) %>%
+    arrange(
+      Group,
+      .by_group = TRUE
+    ) %>%
+    mutate(
+
+      xmin =
+        bar_start +
+        (
+          cumsum(Patients) -
+            Patients
+        ) *
+        endpoint_scale,
+
+      xmax =
+        bar_start +
+        cumsum(Patients) *
+        endpoint_scale,
+
+      ymin = Post - 0.30,
+      ymax = Post + 0.30,
+
+      xmid = (
+        xmin + xmax
+      ) / 2
+    ) %>%
+    ungroup()
+
+
+  # ----------------------------------------------------------
+  # Endpoint-axis limits
+  # ----------------------------------------------------------
+
+  endpoint_y_min <- min(
+    endpoint_counts$Post,
+    na.rm = TRUE
+  ) - 0.5
+
+  endpoint_y_max <- max(
+    endpoint_counts$Post,
+    na.rm = TRUE
+  ) + 0.5
+
+
+  # X-axis maximum for endpoint counts
+  endpoint_x_max <- bar_start +
+    (
+      max_endpoint_total *
+        endpoint_scale
+    )
+
+
+  # ----------------------------------------------------------
+  # Endpoint axes
+  #
+  # These are deliberately drawn inside the main ggplot
+  # because the endpoint bars have a separate visual area.
+  # ----------------------------------------------------------
+
+  endpoint_axis_x <- bar_start
+
+  endpoint_axis_y <- endpoint_y_min
+
+
+  # X tick locations:
+  # 0, 1, 2, ... patients
+  endpoint_x_breaks <- bar_start +
+    (
+      seq(
+        0,
+        max_endpoint_total,
+        by = 1
+      ) *
+        endpoint_scale
+    )
+
+  endpoint_x_labels <- seq(
+    0,
+    max_endpoint_total,
+    by = 1
+  )
+
+
+  # Y ticks use the actual Post cluster numbers
+  endpoint_y_breaks <- seq(
+    min(
+      endpoint_counts$Post,
+      na.rm = TRUE
+    ),
+    max(
+      endpoint_counts$Post,
+      na.rm = TRUE
+    ),
+    by = 1
+  )
+
+
+  # ----------------------------------------------------------
+  # Plot
+  # ----------------------------------------------------------
+
+  p <- ggplot() +
+
+    # --------------------------------------------------------
+    # Endpoint stacked bars
+    # --------------------------------------------------------
+
+    geom_rect(
+      data = endpoint_bars,
+      aes(
+        xmin = xmin,
+        xmax = xmax,
+        ymin = ymin,
+        ymax = ymax,
+        fill = Group
+      ),
+      colour = "white",
+      linewidth = 0.4
+    ) +
+
+    geom_text(
+      data = endpoint_bars %>%
+        filter(
+          Patients > 0
+        ),
+      aes(
+        x = xmid,
+        y = Post,
+        label = Patients
+      ),
+      colour = "white",
+      fontface = "bold",
+      size = 3
+    ) +
+
+
+    # --------------------------------------------------------
+    # Endpoint Y axis
+    # --------------------------------------------------------
+
+    geom_segment(
+      aes(
+        x = endpoint_axis_x,
+        xend = endpoint_axis_x,
+        y = endpoint_axis_y,
+        yend = endpoint_y_max
+      ),
+      colour = "black",
+      linewidth = 0.5
+    ) +
+
+    # Endpoint Y ticks
+    geom_segment(
+      data = data.frame(
+        y = endpoint_y_breaks
+      ),
+      aes(
+        x = endpoint_axis_x - 0.07,
+        xend = endpoint_axis_x,
+        y = y,
+        yend = y
+      ),
+      colour = "black",
+      linewidth = 0.45
+    ) +
+
+    # Endpoint Y labels
+    geom_text(
+      data = data.frame(
+        y = endpoint_y_breaks
+      ),
+      aes(
+        x = endpoint_axis_x - 0.12,
+        y = y,
+        label = y
+      ),
+      hjust = 1,
+      size = 2.8
+    ) +
+
+
+    # --------------------------------------------------------
+    # Endpoint X axis
+    # --------------------------------------------------------
+
+    geom_segment(
+      aes(
+        x = endpoint_axis_x,
+        xend = endpoint_x_max,
+        y = endpoint_axis_y,
+        yend = endpoint_axis_y
+      ),
+      colour = "black",
+      linewidth = 0.5
+    ) +
+
+    # Endpoint X ticks
+    geom_segment(
+      data = data.frame(
+        x = endpoint_x_breaks
+      ),
+      aes(
+        x = x,
+        xend = x,
+        y = endpoint_axis_y,
+        yend = endpoint_axis_y + 0.10
+      ),
+      colour = "black",
+      linewidth = 0.45
+    ) +
+
+    # Endpoint X labels
+    geom_text(
+      data = data.frame(
+        x = endpoint_x_breaks,
+        label = endpoint_x_labels
+      ),
+      aes(
+        x = x,
+        y = endpoint_axis_y - 0.14,
+        label = label
+      ),
+      vjust = 1,
+      size = 2.8
+    ) +
+
+
+    # --------------------------------------------------------
+    # Endpoint axis labels
+    # --------------------------------------------------------
+
+    annotate(
+      "text",
+      x = (
+        endpoint_axis_x +
+          endpoint_x_max
+      ) / 2,
+      y = endpoint_axis_y - 0.42,
+      label = "Patients",
+      fontface = "bold",
+      size = 3
+    ) +
+
+    annotate(
+      "text",
+      x = endpoint_axis_x - 0.55,
+      y = (
+        endpoint_y_min +
+          endpoint_y_max
+      ) / 2,
+      label = "Post",
+      angle = 90,
+      fontface = "bold",
+      size = 3
+    ) +
+
+
+    # --------------------------------------------------------
+    # Endpoint title
+    # --------------------------------------------------------
+
+    annotate(
+      "text",
+      x = bar_start,
+      y = endpoint_y_max + 0.28,
+      label = "Post endpoint counts",
+      hjust = 0,
+      fontface = "bold",
+      size = 3.2
+    ) +
+
+
+    # --------------------------------------------------------
+    # Patient trajectories
+    # --------------------------------------------------------
+
+    geom_line(
+      data = line_data,
+      aes(
+        x = x,
+        y = Clusters_plot,
+        group = patient_key,
+        colour = Group
+      ),
+      linewidth = 0.65,
+      alpha = 0.70
+    ) +
+
+    geom_point(
+      data = line_data,
+      aes(
+        x = x,
+        y = Clusters_plot,
+        group = patient_key,
+        colour = Group
+      ),
+      size = 1.7,
+      alpha = 0.85
+    ) +
+
+
+    # --------------------------------------------------------
+    # Colours
+    # --------------------------------------------------------
+
+    scale_colour_manual(
+      values = group_colours,
+      drop = FALSE
+    ) +
+
+    scale_fill_manual(
+      values = group_colours,
+      drop = FALSE
+    ) +
+
+
+    # --------------------------------------------------------
+    # Main X axis
+    # --------------------------------------------------------
+
+    scale_x_continuous(
+      breaks = c(
+        gDNA_x,
+        Pre_x,
+        Post_x
+      ),
+      labels = c(
+        "gDNA",
+        "Pre",
+        "Post"
+      ),
+      limits = c(
+        0.5,
+        fixed_x_max
+      ),
+      expand = c(
+        0,
+        0
+      )
+    ) +
+
+
+    # --------------------------------------------------------
+    # Main Y axis
+    #
+    # Category-specific range.
+    # --------------------------------------------------------
+
+    scale_y_continuous(
+      breaks = y_breaks,
+      labels = function(x) {
+        as.character(
+          as.integer(x)
+        )
+      },
+      limits = y_limits,
+      expand = c(
+        0,
+        0
+      )
+    ) +
+
+
+    # --------------------------------------------------------
+    # Labels
+    # --------------------------------------------------------
+
+    labs(
+      title = paste(
+        "PAIRS clonal tracking:",
+        category
+      ),
+      subtitle = "Patient trajectories; endpoint bars show true Post cluster counts.",
+      x = NULL,
+      y = "Inferred VAF cluster count",
+      colour = "Group",
+      fill = "Group"
+    ) +
+
+
+    # --------------------------------------------------------
+    # Theme
+    # --------------------------------------------------------
+
+    theme_classic(
+      base_size = 10.5
+    ) +
+
+    theme(
+
+      plot.title = element_text(
+        face = "bold",
+        size = 15,
+        margin = margin(
+          b = 3
+        )
+      ),
+
+      plot.subtitle = element_text(
+        size = 8.5,
+        colour = "grey30",
+        margin = margin(
+          b = 8
+        )
+      ),
+
+      axis.text.x = element_text(
+        face = "bold",
+        size = 10,
+        colour = "black"
+      ),
+
+      axis.text.y = element_text(
+        size = 9,
+        colour = "black"
+      ),
+
+      axis.title.y = element_text(
+        size = 10
+      ),
+
+      axis.ticks = element_line(
+        colour = "black",
+        linewidth = 0.4
+      ),
+
+      axis.line = element_line(
+        colour = "black",
+        linewidth = 0.5
+      ),
+
+      legend.position = "top",
+
+      legend.title = element_text(
+        face = "bold"
+      ),
+
+      legend.text = element_text(
+        size = 9
+      ),
+
+      legend.key.width = unit(
+        1.0,
+        "cm"
+      ),
+
+      plot.margin = margin(
+        10,
+        20,
+        18,
+        10
+      )
+    )
+
+
+  # ----------------------------------------------------------
+  # Save
+  #
+  # IDENTICAL physical dimensions for all three images.
+  # ----------------------------------------------------------
+
+  ggsave(
+    filename = file.path(
+      out_dir,
+      paste0(
+        file_stub,
+        ".pdf"
+      )
+    ),
+    plot = p,
+    width = plot_width,
+    height = plot_height,
+    limitsize = FALSE
+  )
+
+  ggsave(
+    filename = file.path(
+      out_dir,
+      paste0(
+        file_stub,
+        ".png"
+      )
+    ),
+    plot = p,
+    width = plot_width,
+    height = plot_height,
+    dpi = 300,
+    limitsize = FALSE
+  )
+
+
+  print(p)
+
+  invisible(p)
+}
+
+
+# ------------------------------------------------------------
+# Generate all three plots
+# ------------------------------------------------------------
+
+plot_evolution(
+  "Unchanged",
+  "Clonal_tracking_Unchanged"
+)
+
+plot_evolution(
+  "Clonal expansion",
+  "Clonal_tracking_Expansion"
+)
+
+plot_evolution(
+  "Clonal shrinkage",
+  "Clonal_tracking_Shrinkage"
+)
+
+
+# ------------------------------------------------------------
+# Finished
+# ------------------------------------------------------------
+
+cat(
+  "\nFinished.\n",
+  "All three plots have identical dimensions:\n",
+  "  Width:  ", plot_width, " inches\n",
+  "  Height: ", plot_height, " inches\n\n",
+  "Plots written to:\n",
+  out_dir,
+  "\n"
+)

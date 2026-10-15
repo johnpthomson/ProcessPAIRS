@@ -1,0 +1,2537 @@
+
+# ======================================================
+# HRD & Resistance Tier Analysis - End-to-End Script v11-1
+# ======================================================
+setwd("C:/Users/jthoms24/Documents/John_work/PAIRS/Analysis/Summary53")
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(purrr)
+
+# --- Load OncoKB gene info ---
+onco <- read.table("Oncokb_v1_Sept2023_sh.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+if (!"Oncokb" %in% colnames(onco)) stop("Expected an 'Oncokb' column in the Oncokb file with gene type (TSG/Oncogene).")
+
+# ======================================================
+# Load resistance annotation table
+# ======================================================
+
+gene_rules <- read.delim(
+  "Gene_list_input_processpairs_v10-7.txt",
+  stringsAsFactors = FALSE,
+  sep = "\t"
+)
+# Clean columns
+colnames(gene_rules) <- trimws(colnames(gene_rules))
+
+gene_rules <- gene_rules %>%
+  mutate(
+    gene = trimws(gene),
+    cn_direction = toupper(trimws(cn_direction)),
+    snv_axis = toupper(trimws(snv_axis)),
+    classifier_group = trimws(classifier_group),
+    pathway = trimws(pathway),
+    mechanism = trimws(mechanism)
+  )
+
+# Vector of all resistance genes
+resistance_genes <- unique(gene_rules$gene)
+
+# ======================================================
+# VUS INPUT AND CANDIDATE RECONCILIATION — v11-1
+# Loaded early; review evidence is kept separate from
+# pathogenic/likely pathogenic resistance event calling.
+# ======================================================
+setwd("C:/Users/jthoms24/Documents/John_work/PAIRS/maf")
+vus_file <- paste0(
+  "PAIRS_batch2026_AGILENT_SNVs-ensemble_",
+  "Postfilter--batch9-53patient-depthfilter25-",
+  "tp53correct-VUSonly.maf"
+)
+
+vus_raw <- read.delim(
+  vus_file,
+  header = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  na.strings = c("NA", "")
+)
+
+required_vus_columns <- c(
+  "Hugo_Symbol", "Tumor_Sample_Barcode", "NCBI_Build",
+  "Chromosome", "Start_Position", "End_Position",
+  "Reference_Allele", "Tumor_Seq_Allele2",
+  "Variant_Classification", "Consequence", "IMPACT",
+  "vaf", "t_depth", "t_alt_count", "SVIG_TYPE",
+  "SVIG_score", "snv_id"
+)
+
+missing_vus_columns <- setdiff(required_vus_columns, names(vus_raw))
+if (length(missing_vus_columns) > 0) {
+  stop(
+    "VUS MAF missing required columns: ",
+    paste(missing_vus_columns, collapse = ", ")
+  )
+}
+
+# Apply the existing ProcessPAIRS barcode normalisation rules.
+normalise_pairs_barcode <- function(x) {
+  x <- str_replace_all(x, "(?i)_post$", "_Post")
+  x <- str_replace_all(x, "(?i)_pre$", "_Pre")
+  x <- str_replace_all(x, "-", "_")
+  str_trim(x)
+}
+
+vus_raw <- vus_raw %>%
+  mutate(
+    Tumor_Sample_Barcode = normalise_pairs_barcode(
+      as.character(Tumor_Sample_Barcode)
+    ),
+    patient = str_remove(
+      Tumor_Sample_Barcode,
+      "_(gDNA|Pre|Post)$"
+    ),
+    sample_type = str_extract(
+      Tumor_Sample_Barcode,
+      "(gDNA|Pre|Post)$"
+    ),
+    gene = trimws(as.character(Hugo_Symbol)),
+    SVIG_TYPE = toupper(trimws(as.character(SVIG_TYPE))),
+    vaf = suppressWarnings(as.numeric(vaf)),
+    t_depth = suppressWarnings(as.numeric(t_depth)),
+    t_alt_count = suppressWarnings(as.numeric(t_alt_count)),
+    SVIG_score = suppressWarnings(as.numeric(SVIG_score)),
+    variant_key = paste(
+      NCBI_Build, Chromosome, Start_Position, End_Position,
+      Reference_Allele, Tumor_Seq_Allele2, sep = ":"
+    )
+  )
+
+# Retain barcode QC before filtering so unmatched names are visible.
+vus_barcode_qc <- vus_raw %>%
+  count(Tumor_Sample_Barcode, sample_type, name = "n") %>%
+  arrange(sample_type, Tumor_Sample_Barcode)
+
+write.table(
+  vus_barcode_qc,
+  "VUS_barcode_QC_v11-1.txt",
+  sep = "\t", quote = FALSE, row.names = FALSE, na = "."
+)
+
+vus_observations <- vus_raw %>%
+  filter(
+    !is.na(patient), patient != "",
+    sample_type %in% c("Pre", "Post"),
+    !is.na(gene), gene != "",
+    SVIG_TYPE == "VUS"
+  )
+
+if (nrow(vus_observations) == 0) {
+  stop(
+    "No VUS observations passed barcode/timepoint/SVIG_TYPE filtering. ",
+    "Inspect VUS_barcode_QC_v11-1.txt and the MAF contents."
+  )
+}
+
+# Compare exact alleles with the existing primary SNV input where possible.
+# This is annotation only; it does not add variants to snv_sh or merged.
+primary_variant_presence <- tibble(
+  patient = character(), variant_key = character(),
+  primary_seen_pre = logical(), primary_seen_post = logical()
+)
+
+primary_key_columns <- c(
+  "Tumor_Sample_Barcode", "NCBI_Build", "Chromosome",
+  "Start_Position", "End_Position", "Reference_Allele",
+  "Tumor_Seq_Allele2"
+)
+
+if (exists("snv_sh", inherits = TRUE) &&
+    all(primary_key_columns %in% names(snv_sh))) {
+
+  primary_variant_presence <- snv_sh %>%
+    mutate(
+      Tumor_Sample_Barcode = normalise_pairs_barcode(
+        as.character(Tumor_Sample_Barcode)
+      ),
+      patient = str_remove(
+        Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$"
+      ),
+      sample_type = str_extract(
+        Tumor_Sample_Barcode, "(gDNA|Pre|Post)$"
+      ),
+      variant_key = paste(
+        NCBI_Build, Chromosome, Start_Position, End_Position,
+        Reference_Allele, Tumor_Seq_Allele2, sep = ":"
+      )
+    ) %>%
+    filter(
+      !is.na(patient), patient != "",
+      sample_type %in% c("Pre", "Post")
+    ) %>%
+    group_by(patient, variant_key) %>%
+    summarise(
+      primary_seen_pre = any(sample_type == "Pre"),
+      primary_seen_post = any(sample_type == "Post"),
+      .groups = "drop"
+    )
+
+} else {
+  message(
+    "NOTE: snv_sh does not expose all genomic key columns; ",
+    "VUS timepoint status will be based on the VUS MAF alone."
+  )
+}
+
+vus_max_or_na <- function(x) {
+  if (length(x) == 0 || all(is.na(x))) NA_real_ else max(x, na.rm = TRUE)
+}
+
+vus_collapse_text <- function(x) {
+  x <- unique(as.character(x))
+  x <- x[!is.na(x) & x != ""]
+  if (length(x) == 0) "." else paste(sort(x), collapse = "; ")
+}
+
+# Candidate review restricted to genes in the existing knowledge-base table.
+# Include only exact variants observed in Post and NOT observed in Pre in the
+# VUS MAF. gDNA is not used to exclude a candidate. Primary SNV input presence
+# is retained as annotation/QC only and does not redefine VUS-MAF timepoint status.
+vus_review <- vus_observations %>%
+  filter(gene %in% resistance_genes) %>%
+  group_by(patient, gene, variant_key) %>%
+  summarise(
+    snv_id = vus_collapse_text(snv_id),
+    vus_seen_pre = any(sample_type == "Pre"),
+    vus_seen_post = any(sample_type == "Post"),
+    pre_vaf = vus_max_or_na(vaf[sample_type == "Pre"]),
+    post_vaf = vus_max_or_na(vaf[sample_type == "Post"]),
+    post_depth = vus_max_or_na(t_depth[sample_type == "Post"]),
+    post_alt_count = vus_max_or_na(t_alt_count[sample_type == "Post"]),
+    variant_classification = vus_collapse_text(Variant_Classification),
+    consequence = vus_collapse_text(Consequence),
+    impact = vus_collapse_text(IMPACT),
+    SVIG_score = vus_max_or_na(SVIG_score),
+    .groups = "drop"
+  ) %>%
+  # Strict inclusion rule: Post VUS with no matching Pre observation in the VUS MAF.
+  filter(vus_seen_post, !vus_seen_pre) %>%
+  left_join(primary_variant_presence, by = c("patient", "variant_key")) %>%
+  mutate(
+    primary_seen_pre = coalesce(primary_seen_pre, FALSE),
+    primary_seen_post = coalesce(primary_seen_post, FALSE),
+    temporal_status = "Post_only_candidate",
+    review_status = "MANUAL_REVIEW_ONLY",
+    interpretation_note = paste0(
+      "Observed in Post but not detected in Pre in the VUS MAF; ",
+      "not proof of de novo acquisition. Primary-input overlap fields are annotation only."
+    )
+  ) %>%
+  arrange(patient, gene, variant_key)
+
+vus_patient_summary <- vus_review %>%
+  group_by(patient) %>%
+  summarise(
+    VUS_candidate_count = n(),
+    VUS_post_only_count = sum(temporal_status == "Post_only_candidate", na.rm = TRUE),
+    VUS_candidate_genes = vus_collapse_text(gene),
+    VUS_post_only_genes = vus_collapse_text(
+      gene[temporal_status == "Post_only_candidate"]
+    ),
+    VUS_review_flag = TRUE,
+    .groups = "drop"
+  )
+
+# ======================================================
+# END VUS INPUT / CANDIDATE PREPARATION
+# Main event-generation logic below remains unchanged.
+# ======================================================
+setwd("C:/Users/jthoms24/Documents/John_work/PAIRS/Analysis/Summary53")
+
+# --- Helper functions ---
+to_num_cn <- function(x) {
+  sapply(x, function(v) {
+    if (is.na(v) || v %in% c(".", "")) return(2L)
+    nv <- suppressWarnings(as.numeric(v))
+    if (is.na(nv)) return(2L)
+    as.integer(round(nv))
+  }, USE.NAMES = FALSE)
+}
+
+format_snv_text <- function(snv_count) {
+  if (snv_count == 0) return(NULL)
+  if (snv_count == 1) return("SNV")
+  paste0("SNV x", snv_count)
+}
+
+make_event_status <- function(snv_count, cn_num) {
+  snv_count <- ifelse(is.na(snv_count), 0L, as.integer(snv_count))
+  cn_num <- ifelse(is.na(cn_num), 2L, as.integer(cn_num))
+  mapply(function(snv, cn) {
+    if (snv == 0L && cn == 2L) return(".")
+    parts <- c()
+    snv_text <- format_snv_text(snv)
+    if (!is.null(snv_text)) parts <- c(parts, snv_text)
+    if (cn != 2L) parts <- c(parts, paste0("CN=", cn))
+    paste(parts, collapse = " + ")
+  }, snv_count, cn_num, USE.NAMES = FALSE)
+}
+
+# ======================================================
+# CN resistance interpretation using annotation rules
+# ======================================================
+
+interpret_cn_direction <- function(pre, post, direction_rule) {
+
+  # Safety coercion
+  pre  <- ifelse(is.na(pre), 2L, as.integer(pre))
+  post <- ifelse(is.na(post), 2L, as.integer(post))
+
+  # Ignore unclear genes
+  if (is.na(direction_rule) || direction_rule == "UNCLEAR") {
+    return(NA_character_)
+  }
+
+  # --------------------------------------------------
+  # LOSS-driven resistance genes
+  # Example:
+  # TP53BP1
+  # REV7
+  # PTIP
+  # --------------------------------------------------
+
+  if (direction_rule == "LOSS") {
+
+    # CN decreases from Pre -> Post
+    if (post < pre) {
+      return("CN_LOSS")
+    }
+  }
+
+  # --------------------------------------------------
+  # GAIN-driven resistance genes
+  # Example:
+  # ABCB1
+  # RAD51
+  # BRCA restoration
+  # --------------------------------------------------
+
+  if (direction_rule == "GAIN") {
+
+    # CN increases from Pre -> Post
+    if (post > pre) {
+      return("CN_GAIN")
+    }
+  }
+
+  return(NA_character_)
+}
+
+
+# ======================================================
+# SNV resistance interpretation using annotation rules
+# ======================================================
+
+interpret_snv_axis <- function(
+  pre_count,
+  post_count,
+  snv_axis,
+  pre_vaf = NA,
+  post_vaf = NA
+) {
+
+  pre  <- ifelse(is.na(pre_count), 0L, as.integer(pre_count))
+  post <- ifelse(is.na(post_count), 0L, as.integer(post_count))
+
+  # Ignore unclear genes
+  if (is.na(snv_axis) || snv_axis == "UNCLEAR") {
+    return(NA_character_)
+  }
+
+  # --------------------------------------------------
+  # POST-ACQUIRED PATHOGENIC
+  # --------------------------------------------------
+
+  if (snv_axis == "POST_ACQUIRED_PATHOGENIC") {
+
+    # New post mutation
+    if (pre == 0L && post > 0L) {
+      return("POST_ACQUIRED_PATHOGENIC")
+    }
+
+    # Expansion in mutation burden
+    if (post > pre) {
+      return("POST_ACQUIRED_PATHOGENIC")
+    }
+
+    # Optional VAF expansion support
+    if (!is.na(pre_vaf) && !is.na(post_vaf)) {
+
+      if ((post_vaf - pre_vaf) > 0.25) {
+        return("POST_ACQUIRED_PATHOGENIC")
+      }
+    }
+  }
+
+  # --------------------------------------------------
+  # SECONDARY REVERSION
+  # --------------------------------------------------
+
+  if (snv_axis == "SECONDARY_REVERSION") {
+
+    # Newly appearing reversion
+    if (pre == 0L && post > 0L) {
+      return("SECONDARY_REVERSION")
+    }
+
+    # Increased post burden
+    if (post > pre) {
+      return("SECONDARY_REVERSION")
+    }
+  }
+
+  return(NA_character_)
+}
+  
+
+# --- Prepare HRD events ---
+hrd_events_raw <- merged %>%
+  filter(gene %in% resistance_genes) %>%
+  mutate(
+    patient = str_remove(Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$"),
+    sample_type = str_extract(Tumor_Sample_Barcode, "(gDNA|Pre|Post)"),
+    cn_num = to_num_cn(cn),
+    snv_count = 0 + (!is.na(snv.id.1)) + (!is.na(snv.id.2))
+  ) %>%
+  select(patient, gene, sample_type, cn_num, snv_count)
+
+hrd_events <- hrd_events_raw %>%
+  group_by(patient, gene, sample_type) %>%
+  summarise(
+    cn_num = if (all(is.na(cn_num))) 2L else max(cn_num, na.rm = TRUE),
+    snv_count = sum(snv_count, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+hrd_long <- hrd_events %>%
+  pivot_wider(
+    names_from = sample_type,
+    values_from = c(cn_num, snv_count),
+    names_glue = "{.value}_{sample_type}"
+  ) %>%
+  mutate(
+    cn_num_gDNA = ifelse(is.na(cn_num_gDNA), 2L, as.integer(cn_num_gDNA)),
+    cn_num_Pre  = ifelse(is.na(cn_num_Pre), 2L, as.integer(cn_num_Pre)),
+    cn_num_Post = ifelse(is.na(cn_num_Post), 2L, as.integer(cn_num_Post)),
+    snv_count_gDNA = ifelse(is.na(snv_count_gDNA), 0L, as.integer(snv_count_gDNA)),
+    snv_count_Pre  = ifelse(is.na(snv_count_Pre), 0L, as.integer(snv_count_Pre)),
+    snv_count_Post = ifelse(is.na(snv_count_Post), 0L, as.integer(snv_count_Post))
+  )
+  
+# ======================================================
+# Join resistance annotation metadata
+# ======================================================
+
+hrd_long <- hrd_long %>%
+  left_join(
+    gene_rules %>%
+      select(
+        gene,
+        pathway,
+        mechanism,
+        cn_direction,
+        snv_axis,
+        classifier_group
+      ),
+    by = "gene"
+  )
+  
+ print(head(hrd_long))  
+ 
+ 
+ 
+ ##################################################
+ 
+ # ======================================================
+# Resistance event interpretation
+# ======================================================
+
+resistance_gene_rows <- hrd_long %>%
+
+  rowwise() %>%
+
+  mutate(
+
+    # -----------------------------
+    # SNV interpretation
+    # -----------------------------
+
+    snv_desc = interpret_snv_axis(
+      pre_count  = snv_count_Pre,
+      post_count = snv_count_Post,
+      snv_axis   = snv_axis
+    ),
+
+    # -----------------------------
+    # CN interpretation
+    # -----------------------------
+
+    cn_desc = interpret_cn_direction(
+      pre            = cn_num_Pre,
+      post           = cn_num_Post,
+      direction_rule = cn_direction
+    ),
+
+    # -----------------------------
+    # Resistance evidence
+    # -----------------------------
+
+    has_resistance_event =
+      !is.na(snv_desc) |
+      !is.na(cn_desc),
+
+    # -----------------------------
+    # Combined event string
+    # -----------------------------
+
+    event_string = paste(
+      na.omit(c(snv_desc, cn_desc)),
+      collapse = "; "
+    )
+
+  ) %>%
+
+  ungroup() %>%
+
+  filter(has_resistance_event)
+
+
+
+
+# ======================================================
+# DRIVER EVENT TABLE
+# One row = one interpreted resistance event
+# ======================================================
+
+driver_events <- resistance_gene_rows %>%
+
+  mutate(
+
+    # -----------------------------
+    # Event type
+    # -----------------------------
+    event_type = case_when(
+
+      !is.na(snv_desc) & !is.na(cn_desc) ~ "SNV+CN",
+
+      !is.na(snv_desc) ~ "SNV",
+
+      !is.na(cn_desc) ~ "CN",
+
+      TRUE ~ "OTHER"
+    ),
+
+    # -----------------------------
+    # BRCA shared mutation logic
+    # TRUE reversion requires:
+    # Pre-existing mutation PLUS
+    # additional post event
+    # -----------------------------
+    shared_pre_post_snv =
+      snv_count_Pre > 0 &
+      snv_count_Post > snv_count_Pre,
+
+    # -----------------------------
+    # True BRCA adaptive restoration
+    # -----------------------------
+    true_brca_reversion = case_when(
+
+      gene %in% c("BRCA1","BRCA2") &
+      snv_axis == "SECONDARY_REVERSION" &
+      shared_pre_post_snv ~ TRUE,
+
+      TRUE ~ FALSE
+    ),
+
+    # -----------------------------
+    # Adaptive evidence score
+    # Used later for ranking
+    # -----------------------------
+    driver_score = case_when(
+
+      true_brca_reversion ~ 100,
+
+      classifier_group == "1.BRCA_restoration" &
+      event_type == "SNV" ~ 90,
+
+      classifier_group == "1.BRCA_restoration" &
+      event_type == "SNV+CN" ~ 85,
+
+      classifier_group == "2a.HR_bypass" &
+      event_type == "SNV" ~ 70,
+
+      classifier_group == "2b.Fork_protection" &
+      event_type == "SNV" ~ 65,
+
+      classifier_group == "2c.Drug_target_adaptation" ~ 60,
+
+      classifier_group == "2a.HR_bypass" &
+      event_type == "CN" ~ 50,
+
+      classifier_group == "2b.Fork_protection" &
+      event_type == "CN" ~ 45,
+
+
+
+      TRUE ~ 1
+    )
+  )
+  
+
+# ======================================================
+# HUMAN READABLE EVENT TABLE
+# ======================================================
+
+driver_event_table <- driver_events %>%
+
+  mutate(
+
+    interpreted_event =
+      paste0(
+        gene,
+        " | ",
+        classifier_group,
+        " | ",
+        mechanism,
+        " | ",
+        event_string
+      )
+
+  ) %>%
+
+  arrange(
+    patient,
+    desc(driver_score)
+  )
+  
+  
+View(driver_event_table)
+
+write.table(
+  driver_event_table,
+  "driver_event_table_v11-1.txt",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)  
+
+
+
+# ======================================================
+# PATIENT-LEVEL RESISTANCE FLAGS
+# ======================================================
+
+resistance_flags <- driver_events %>%
+
+  group_by(patient) %>%
+
+  summarise(
+
+    resistance_report =
+      paste(
+        paste0(
+          gene,
+          ": ",
+          classifier_group,
+          " [",
+          event_string,
+          "]"
+        ),
+        collapse = "; "
+      ),
+
+    # -----------------------------
+    # Mechanism presence
+    # -----------------------------
+    has_brca_restoration =
+      any(classifier_group == "1.BRCA_restoration"),
+
+    has_true_brca_reversion =
+      any(true_brca_reversion),
+
+    has_hr_bypass =
+      any(classifier_group == "2a.HR_bypass"),
+
+    has_fork_protection =
+      any(classifier_group == "2b.Fork_protection"),
+
+    has_drug_efflux =
+      any(classifier_group == "2c.Drug_target_adaptation"),
+
+
+    # -----------------------------
+    # Complexity metrics
+    # -----------------------------
+    total_driver_events = n(),
+
+    unique_driver_genes = n_distinct(gene),
+
+    mixed_event_types = n_distinct(event_type),
+
+    .groups = "drop"
+  )
+
+# ======================================================
+# Final patient classification
+# ======================================================
+
+hrd_status_wide <- hrd_long %>%
+
+  group_by(patient) %>%
+
+  slice(1) %>%
+
+  ungroup() %>%
+
+  left_join(resistance_flags, by = "patient") %>%
+
+  mutate(
+
+    resistance_report =
+      ifelse(is.na(resistance_report),
+             ".",
+             resistance_report),
+
+    # ==================================================
+    # INITIAL TIER ASSIGNMENT
+    # ==================================================
+
+    resistance_tier = case_when(
+
+      # --------------------------------------------------
+      # TRUE BRCA adaptive restoration
+      # --------------------------------------------------
+
+      has_true_brca_reversion ~
+        "1.BRCA_associated_adaptive_restoration",
+
+      # --------------------------------------------------
+      # HR bypass
+      # --------------------------------------------------
+
+      has_hr_bypass ~
+        "2a.HR_bypass",
+
+      # --------------------------------------------------
+      # Fork protection
+      # --------------------------------------------------
+
+      has_fork_protection ~
+        "2b.Fork_protection",
+
+      # --------------------------------------------------
+      # Drug efflux
+      # --------------------------------------------------
+
+      has_drug_efflux ~
+        "2c.Drug_target_adaptation",
+
+      
+      TRUE ~
+        "3.No_clear_genomic_resistance"
+    )
+  ) %>%
+
+  # ==================================================
+  # BIOLOGICAL OVERRIDE RULES
+  # ==================================================
+
+  mutate(
+
+    resistance_tier = case_when(
+
+      # --------------------------------------------------
+      # NEVER override BRCA adaptive restoration
+      # --------------------------------------------------
+
+      resistance_tier ==
+        "1.BRCA_associated_adaptive_restoration" ~
+          resistance_tier,
+
+      # --------------------------------------------------
+      # FORCE FORK PROTECTION
+      # TP53BP1 / FANCA / FANCD2
+      # --------------------------------------------------
+
+      str_detect(
+        resistance_report,
+        "TP53BP1|MAD2L2|REV7|RIF1|SHLD1|SHLD2|SHLD3"
+      ) ~
+        "2b.Fork_protection",
+
+      # --------------------------------------------------
+      # FORCE DRUG EFFLUX
+      # only if NOT already fork protection
+      # --------------------------------------------------
+
+      str_detect(
+        resistance_report,
+        "PARG|PARP1|PARP2"
+      ) &
+      resistance_tier !=
+        "2b.Fork_protection" ~
+          "2c.Drug_target_adaptation",
+
+      TRUE ~
+        resistance_tier
+    )
+  ) %>%
+
+  # ==================================================
+  # FINAL MECHANISM LABELS
+  # ==================================================
+
+  mutate(
+
+    resistance_mechanism = case_when(
+
+      resistance_tier ==
+        "1.BRCA_associated_adaptive_restoration" ~
+          "BRCA-associated adaptive restoration",
+
+      resistance_tier ==
+        "2a.HR_bypass" ~
+          "HR bypass / replication stress adaptation",
+
+      resistance_tier ==
+        "2b.Fork_protection" ~
+          "Fork protection biology",
+
+      resistance_tier ==
+        "2c.Drug_target_adaptation" ~
+          "Drug target adaptation",
+
+
+      TRUE ~
+          "No clear genomic resistance mechanism"
+    )
+  )
+  
+
+# ======================================================
+# MAIN DRIVER EVENT
+# Biological override-aware driver selection
+# ======================================================
+
+# ------------------------------------------------------
+# Add biologically prioritised override score
+# ------------------------------------------------------
+
+driver_events_ranked <- driver_events %>%
+  
+  mutate(
+    
+    override_driver_score = case_when(
+      
+      # ------------------------------------------------
+      # TRUE BRCA reversions / ORF restoration
+      # strongest biological evidence
+      # ------------------------------------------------
+      
+      true_brca_reversion ~ 1000,
+      
+      # ------------------------------------------------
+      # BRCA restoration CN events ONLY
+      # supportive biology but should NOT dominate
+      # over canonical resistance drivers
+      # ------------------------------------------------
+      
+      gene %in% c("BRCA1", "BRCA2") &
+        str_detect(event_string, "CN_GAIN") &
+        !str_detect(event_string, "SECONDARY_REVERSION") ~ 150,
+      
+      # ------------------------------------------------
+      # Canonical fork protection genes only
+      # (Shieldin / fork stabilisation axis)
+      # ------------------------------------------------
+      
+      gene %in% c(
+        "TP53BP1",
+        "MAD2L2",
+        "REV7",
+        "RIF1",
+        "SHLD1",
+        "SHLD2",
+        "SHLD3"
+      ) ~ 900,
+      
+      # ------------------------------------------------
+      # Drug adaptation genes
+      # ------------------------------------------------
+      
+      gene %in% c(
+        "PARP1",
+        "PARP2",
+        "PARG"
+      ) ~ 800,
+      
+      # ------------------------------------------------
+      # HR bypass / replication stress adaptation
+      # ------------------------------------------------
+      
+      classifier_group == "2a.HR_bypass" ~ 700,
+      
+
+      
+      TRUE ~ driver_score
+    )
+  )
+# ------------------------------------------------------
+# Select dominant biological driver
+# ------------------------------------------------------
+
+main_driver_table <- driver_events_ranked %>%
+  
+  arrange(
+    patient,
+    desc(override_driver_score),
+    desc(driver_score)
+  ) %>%
+  
+  group_by(patient) %>%
+  
+  slice(1) %>%
+  
+  ungroup() %>%
+  
+  transmute(
+    
+    patient,
+    
+    main_driver =
+      paste0(
+        gene,
+        " [",
+        event_string,
+        "]"
+      ),
+    
+    main_driver_mechanism = mechanism,
+    
+    main_driver_group = classifier_group,
+    
+    driver_score = override_driver_score
+  )
+
+# ------------------------------------------------------
+# Merge into patient summary
+# ------------------------------------------------------
+
+hrd_status_wide <- hrd_status_wide %>%
+  left_join(main_driver_table, by = "patient")
+
+# Attach VUS candidate evidence before final patient-level reporting.
+# These columns are review flags only and do not alter the classifier.
+hrd_status_wide <- hrd_status_wide %>%
+  left_join(vus_patient_summary, by = "patient") %>%
+  mutate(
+    VUS_candidate_count = coalesce(VUS_candidate_count, 0L),
+    VUS_post_only_count = coalesce(VUS_post_only_count, 0L),
+    VUS_candidate_genes = coalesce(VUS_candidate_genes, "."),
+    VUS_post_only_genes = coalesce(VUS_post_only_genes, "."),
+    VUS_review_flag = coalesce(VUS_review_flag, FALSE)
+  )
+  
+
+  
+####################################################################################
+
+
+
+
+
+# ======================================================
+# FINAL CLASSIFIER
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+
+  mutate(
+
+    final_classifier = resistance_tier,
+
+    final_classifier_description = case_when(
+
+      final_classifier ==
+        "1.BRCA_associated_adaptive_restoration" ~
+          "Evidence of BRCA restoration or BRCA-associated adaptive resistance",
+
+      final_classifier ==
+        "2a.HR_bypass" ~
+          "Evidence of HR pathway bypass or replication stress adaptation",
+
+      final_classifier ==
+        "2b.Fork_protection" ~
+          "Evidence of fork protection biology",
+
+      final_classifier ==
+        "2c.Drug_target_adaptation" ~
+          "Evidence of drug target adaptation",
+
+
+      TRUE ~
+          "No convincing genomic resistance mechanism identified"
+    )
+  )
+  
+  
+
+
+# ======================================================
+# BRCA CONTEXT
+# ======================================================
+
+brca_context <- hrd_long %>%
+
+  filter(gene %in% c("BRCA1","BRCA2")) %>%
+
+  group_by(patient) %>%
+
+  summarise(
+
+    BRCA_context = case_when(
+
+      any(snv_count_gDNA > 0) ~
+        "1a.BRCA_germline",
+
+      any(snv_count_Pre > 0 & snv_count_Post > 0) ~
+        "1b.BRCA_shared_pre_post",
+
+      any(snv_count_Pre > 0) ~
+        "1c.BRCA_PreOnly_SNV",
+
+      any(snv_count_Post > 0) ~
+        "1d.BRCA_PostOnly_SNV",
+
+       any(cn_num_Pre != 2) ~
+        "2.BRCA_CN_altered_Pre",
+
+      TRUE ~
+        "3.No_BRCA_event"
+    ),
+
+    .groups = "drop"
+  )
+  
+hrd_status_wide <- hrd_status_wide %>%
+  left_join(brca_context, by = "patient")
+  
+
+# ======================================================
+# PATHWAY SUMMARIES
+# ======================================================
+
+patient_pathways <- driver_events %>%
+
+  group_by(patient) %>%
+
+  summarise(
+
+    pathways_involved =
+      paste(
+        sort(unique(pathway)),
+        collapse = "; "
+      ),
+
+    mechanisms_involved =
+      paste(
+        sort(unique(mechanism)),
+        collapse = "; "
+      ),
+
+    .groups = "drop"
+  )
+
+hrd_status_wide <- hrd_status_wide %>%
+  left_join(patient_pathways, by = "patient")
+  
+
+# ======================================================
+# GENOMIC DIRECTIONALITY
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+
+  mutate(
+
+    genomic_directionality = case_when(
+
+      final_classifier ==
+        "1.BRCA_associated_adaptive_restoration" ~
+          "Adaptive",
+
+      total_driver_events >= 3 ~
+          "Adaptive",
+
+      mixed_event_types >= 2 ~
+          "Mixed",
+
+      total_driver_events > 0 ~
+          "Emergent",
+
+      TRUE ~
+          "No evidence of adaptation"
+    )
+  )
+  
+
+#======================================================
+# DRIVER CONFIDENCE
+#=======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+  
+  mutate(
+    
+    driver_confidence = case_when(
+      
+      # Strongest evidence
+      final_classifier ==
+        "1.BRCA_associated_adaptive_restoration" &
+        has_true_brca_reversion ~ "high",
+      
+      # Multiple coherent resistance events
+      final_classifier %in% c(
+        "2a.HR_bypass",
+        "2b.Fork_protection",
+        "2c.Drug_target_adaptation"
+      ) &
+        total_driver_events >= 2 ~ "moderate",
+      
+      # Single event only
+      final_classifier %in% c(
+        "2a.HR_bypass",
+        "2b.Fork_protection",
+        "2c.Drug_target_adaptation"
+      ) ~ "low-moderate",
+      
+      
+      # No convincing mechanism
+      final_classifier ==
+        "3.No_clear_genomic_resistance" ~ "none",
+      
+      TRUE ~ "unknown"
+    )
+  )
+
+
+
+# ======================================================
+# OPTIONAL BRCA ORF RESTORATION ANNOTATION
+# ======================================================
+
+brca_orf <- merged %>%
+  
+  filter(gene %in% c("BRCA1","BRCA2")) %>%
+  
+  mutate(
+    
+    patient =
+      str_remove(
+        Tumor_Sample_Barcode,
+        "_(gDNA|Pre|Post)$"
+      ),
+    
+    sample_type =
+      str_extract(
+        Tumor_Sample_Barcode,
+        "(gDNA|Pre|Post)"
+      )
+  ) %>%
+  
+  pivot_longer(
+    
+    cols = c(snv.id.1, snv.id.2),
+    
+    names_to = "snv_slot",
+    
+    values_to = "variant"
+  ) %>%
+  
+  filter(!is.na(variant)) %>%
+  
+  # --------------------------------------------------
+  # Extract frameshift lengths
+  # Example:
+  # p.K654fs*21 -> 21
+  # --------------------------------------------------
+  
+  mutate(
+    
+    fs_shift =
+      str_extract(
+        variant,
+        "(?<=fs\\*)\\d+"
+      ),
+    
+    fs_shift =
+      suppressWarnings(
+        as.numeric(fs_shift)
+      )
+  ) %>%
+  
+  filter(!is.na(fs_shift)) %>%
+  
+  group_by(patient, gene) %>%
+  
+  summarise(
+    
+    total_fs_shift =
+      sum(fs_shift, na.rm = TRUE),
+    
+    fs_events =
+      paste(
+        unique(variant),
+        collapse = "; "
+      ),
+    
+    # --------------------------------------------------
+    # Putative ORF restoration
+    # --------------------------------------------------
+    
+    putative_orf_restoration =
+      case_when(
+        
+        total_fs_shift %% 3 == 0 ~ "Y",
+        
+        TRUE ~ "N"
+      ),
+    
+    .groups = "drop"
+  )
+
+# ======================================================
+# COLLAPSE TO PATIENT LEVEL
+# ======================================================
+
+brca_orf_summary <- brca_orf %>%
+  
+  group_by(patient) %>%
+  
+  summarise(
+    
+    BRCA_orf_restore =
+      ifelse(
+        any(putative_orf_restoration == "Y"),
+        "Y",
+        "N"
+      ),
+    
+    BRCA_orf_details =
+      paste(
+        paste0(
+          gene,
+          "(",
+          total_fs_shift,
+          ")"
+        ),
+        collapse = "; "
+      ),
+    
+    BRCA_orf_variants =
+      paste(
+        paste0(
+          gene,
+          ": ",
+          fs_events
+        ),
+        collapse = " | "
+      ),
+    
+    .groups = "drop"
+  )
+
+# ======================================================
+# MERGE INTO MAIN TABLE
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+  
+  left_join(
+    brca_orf_summary,
+    by = "patient"
+  ) %>%
+  
+  mutate(
+    
+    BRCA_orf_restore =
+      case_when(
+        
+        final_classifier !=
+          "1.BRCA_associated_adaptive_restoration" ~ "N",
+        
+        is.na(BRCA_orf_restore) ~ "N",
+        
+        TRUE ~ BRCA_orf_restore
+      ),
+    
+    BRCA_orf_details =
+      ifelse(
+        is.na(BRCA_orf_details),
+        ".",
+        BRCA_orf_details
+      ),
+    
+    BRCA_orf_variants =
+      ifelse(
+        is.na(BRCA_orf_variants),
+        ".",
+        BRCA_orf_variants
+      )
+  )
+
+
+
+
+
+
+# ======================================================
+# SNV EVOLUTION ADD-ON (SNV-ID BASED: Acquired / Lost / Shared)
+# ======================================================
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+# ----------------------------
+# 1. Build MASTER SNV catalogue from snv_sh
+# ----------------------------
+
+snv_catalog <- snv_sh %>%
+  
+  mutate(
+    patient = str_remove(Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$"),
+    sample_type = str_extract(Tumor_Sample_Barcode, "(gDNA|Pre|Post)")
+  ) %>%
+  
+  filter(!is.na(snv_id)) %>%
+  
+  distinct(patient, snv_id, sample_type)
+
+# ----------------------------
+# 2. Pivot to PRE / POST presence matrix
+# ----------------------------
+
+snv_matrix <- snv_catalog %>%
+  
+  mutate(present = 1L) %>%
+  
+  pivot_wider(
+    names_from = sample_type,
+    values_from = present,
+    values_fill = list(present = 0)
+  ) %>%
+  
+  mutate(
+    Pre  = ifelse(is.na(Pre), 0L, Pre),
+    Post = ifelse(is.na(Post), 0L, Post)
+  )
+
+# ----------------------------
+# 3. Classify SNV state per SNV-ID
+# ----------------------------
+
+snv_states <- snv_matrix %>%
+  
+  mutate(
+    
+    snv_state = case_when(
+      Pre == 0 & Post == 1 ~ "Acquired",
+      Pre == 1 & Post == 0 ~ "Lost",
+      Pre == 1 & Post == 1 ~ "Shared",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  
+  filter(!is.na(snv_state))
+
+# ----------------------------
+# 4. Collapse to gene-level summaries (SNV-ID aware)
+# ----------------------------
+
+snv_gene_summary <- snv_sh %>%
+  
+  mutate(
+    patient = str_remove(Tumor_Sample_Barcode, "_(gDNA|Pre|Post)$")
+  ) %>%
+  
+  select(patient, gene, snv_id) %>%
+  distinct() %>%
+  
+  inner_join(
+    snv_states %>% select(patient, snv_id, snv_state),
+    by = c("patient", "snv_id")
+  ) %>%
+  
+  group_by(patient, snv_state) %>%
+  
+  summarise(
+    gene_list = paste(sort(unique(gene)), collapse = ","),
+    n_genes   = n_distinct(gene),
+    n_snvs    = n_distinct(snv_id),
+    .groups = "drop"
+  )
+
+# ----------------------------
+# 5. Patient-level summary strings
+# ----------------------------
+
+snv_evolution_summary <- snv_gene_summary %>%
+  
+  group_by(patient) %>%
+  
+  summarise(
+    
+    Tumor_Evolution = paste(
+      paste0(snv_state, ": ", n_snvs),
+      collapse = "; "
+    ),
+    
+    SNV_Gene_Evolution = paste(
+      paste0(snv_state, ": ", gene_list),
+      collapse = "; "
+    ),
+    
+    .groups = "drop"
+  )
+
+# ----------------------------
+# 6. Merge into main table (NO LOGIC CHANGE OUTSIDE THIS BLOCK)
+# ----------------------------
+
+hrd_status_wide <- hrd_status_wide %>%
+  left_join(snv_evolution_summary, by = "patient")
+
+
+
+# ======================================================
+# PRE STATE (CLEAN RESISTANCE-REPORT STYLE IMPLEMENTATION)
+# ======================================================
+
+pre_gene_events <- hrd_long %>%
+
+  # -----------------------------
+  # Restrict to resistance genes
+  # -----------------------------
+  filter(gene %in% resistance_genes) %>%
+
+  # -----------------------------
+  # PRE signal extraction
+  # -----------------------------
+  mutate(
+
+    pre_snv = snv_count_Pre,
+    pre_cn  = cn_num_Pre,
+
+    CN_event_pre = case_when(
+      pre_cn > 2 ~ "CN_GAIN",
+      pre_cn < 2 ~ "CN_LOSS",
+      TRUE ~ NA_character_
+    ),
+
+    SNV_event_pre = case_when(
+      pre_snv > 0 ~ "SNV",
+      TRUE ~ NA_character_
+    ),
+
+    has_pre_event = !is.na(CN_event_pre) | !is.na(SNV_event_pre)
+  ) %>%
+
+  # -----------------------------
+  # Keep only informative genes
+  # -----------------------------
+  filter(has_pre_event) %>%
+
+  # -----------------------------
+  # Build PRE event strings (WITH GENE NAME)
+  # -----------------------------
+  mutate(
+
+    pre_event_string = case_when(
+
+      !is.na(CN_event_pre) & !is.na(SNV_event_pre) ~
+        paste0(gene, ": ", classifier_group, " [", CN_event_pre, "; SNV]"),
+
+      !is.na(CN_event_pre) ~
+        paste0(gene, ": ", classifier_group, " [", CN_event_pre, "]"),
+
+      !is.na(SNV_event_pre) ~
+        paste0(gene, ": ", classifier_group, " [SNV]"),
+
+      TRUE ~ NA_character_
+    )
+  )
+
+# ======================================================
+# Collapse to patient level
+# ======================================================
+
+pre_state_table <- pre_gene_events %>%
+
+  group_by(patient) %>%
+
+  summarise(
+    PRE_STATE = paste(sort(unique(pre_event_string)), collapse = "; "),
+    .groups = "drop"
+  )
+
+# ======================================================
+# Merge into main table
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+  left_join(pre_state_table, by = "patient") %>%
+  mutate(
+    PRE_STATE = ifelse(is.na(PRE_STATE), ".", PRE_STATE)
+  )
+
+
+
+
+# ======================================================
+# PRE SNV COUNT + GENE LIST
+# ======================================================
+
+pre_snv_summary <- pre_gene_events %>%
+
+  filter(!is.na(SNV_event_pre)) %>%
+
+  group_by(patient) %>%
+
+  summarise(
+
+    PRE_SNV = n_distinct(gene),
+
+    PRE_SNV_GENES =
+      paste(
+        sort(unique(gene)),
+        collapse = ", "
+      ),
+
+    .groups = "drop"
+  )
+
+# ======================================================
+# Merge into patient table
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+
+  left_join(
+    pre_snv_summary,
+    by = "patient"
+  ) %>%
+
+  mutate(
+
+    PRE_SNV =
+      ifelse(
+        is.na(PRE_SNV),
+        0L,
+        PRE_SNV
+      ),
+
+    PRE_SNV_GENES =
+      ifelse(
+        is.na(PRE_SNV_GENES),
+        ".",
+        PRE_SNV_GENES
+      )
+  )
+
+
+
+# ======================================================
+# PRE SNV SUMMARY
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+
+  mutate(
+
+    PRE_SNV_SUMMARY = case_when(
+
+      PRE_SNV == 0 ~ "0",
+
+      TRUE ~ paste0(
+        PRE_SNV,
+        "; ",
+        PRE_SNV_GENES
+      )
+    )
+
+  )
+
+
+
+
+# ======================================================
+# POST SNV COUNT + GENE LIST
+# Genes with SNV events in POST sample
+# ======================================================
+
+post_snv_summary <- hrd_long %>%
+
+  filter(gene %in% resistance_genes) %>%
+
+  filter(snv_count_Post > 0) %>%
+
+  group_by(patient) %>%
+
+  summarise(
+
+    POST_SNV = n_distinct(gene),
+
+    POST_SNV_GENES =
+      paste(
+        sort(unique(gene)),
+        collapse = ", "
+      ),
+
+    .groups = "drop"
+  )
+
+# ======================================================
+# Merge into patient table
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+
+  left_join(
+    post_snv_summary,
+    by = "patient"
+  ) %>%
+
+  mutate(
+
+    POST_SNV = ifelse(
+      is.na(POST_SNV),
+      0L,
+      POST_SNV
+    ),
+
+    POST_SNV_GENES = ifelse(
+      is.na(POST_SNV_GENES),
+      ".",
+      POST_SNV_GENES
+    ),
+
+    POST_SNV_SUMMARY = case_when(
+
+      POST_SNV == 0 ~ "0",
+
+      TRUE ~ paste0(
+        POST_SNV,
+        "; ",
+        POST_SNV_GENES
+      )
+    )
+  )
+
+
+
+
+
+# ======================================================
+# PRE CN GOI SUMMARY
+# GOI CN events only
+# ======================================================
+
+goi_cn <- c(
+  "BRCA1",
+  "BRCA2",
+  "TP53BP1",
+  "CCNE1"
+)
+
+hrd_status_wide <- hrd_status_wide %>%
+
+  rowwise() %>%
+
+  mutate(
+
+    PRE_CN_GOI_SUMMARY = {
+
+      if (is.na(PRE_STATE) || PRE_STATE == ".") {
+
+        "."
+
+      } else {
+
+        events <- strsplit(PRE_STATE, "; ")[[1]]
+
+        cn_events <- events %>%
+
+          .[str_detect(., "CN_GAIN|CN_LOSS")] %>%
+
+          purrr::map_chr(function(x) {
+
+            gene <- str_extract(x, "^[^:]+")
+
+            cn <- str_extract(x, "CN_GAIN|CN_LOSS")
+
+            paste0(gene, " [", cn, "]")
+
+          })
+
+        cn_events <- cn_events[
+          str_extract(cn_events, "^[^ ]+") %in% goi_cn
+        ]
+
+        cn_events <- unique(cn_events)
+
+        if (length(cn_events) == 0) {
+          "."
+        } else {
+          paste(sort(cn_events), collapse = ", ")
+        }
+      }
+    }
+
+  ) %>%
+
+  ungroup()
+
+# ======================================================
+# Extract BRCA CN change status (ROBUST VERSION)
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+  mutate(
+
+    # Extract full BRCA1/BRCA2 statements without cutting on semicolons
+    brca_report =
+      str_extract_all(
+        resistance_report,
+        "BRCA1:[^|]*?(?=\\s+[A-Z0-9]+:|$)|BRCA2:[^|]*?(?=\\s+[A-Z0-9]+:|$)"
+      ),
+
+    # Safely classify CNV signal across full extracted text
+    BRCA_CN_change = case_when(
+
+      map_lgl(brca_report, ~ any(str_detect(.x, "CN_GAIN"))) &
+        map_lgl(brca_report, ~ any(str_detect(.x, "CN_LOSS"))) ~
+        "MIXED",
+
+      map_lgl(brca_report, ~ any(str_detect(.x, "CN_GAIN"))) ~
+        "CN_GAIN",
+
+      map_lgl(brca_report, ~ any(str_detect(.x, "CN_LOSS"))) ~
+        "CN_LOSS",
+
+      TRUE ~ "NONE"
+    )
+
+  ) %>%
+  select(-brca_report)
+
+
+# ======================================================
+# Refine BRCA secondary event terminology
+# Only TRUE ORF restorations retain
+# "SECONDARY_REVERSION"
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+
+  mutate(
+
+    # --------------------------------------------------
+    # Update main driver text
+    # --------------------------------------------------
+
+    main_driver = case_when(
+
+      final_classifier == "1.BRCA_associated_adaptive_restoration" &
+        BRCA_orf_restore == "N" ~
+        str_replace(
+          main_driver,
+          "SECONDARY_REVERSION",
+          "SECONDARY_MUTATION"
+        ),
+
+      TRUE ~ main_driver
+    ),
+
+    # --------------------------------------------------
+    # Update resistance report text
+    # --------------------------------------------------
+
+    resistance_report = case_when(
+
+      final_classifier == "1.BRCA_associated_adaptive_restoration" &
+        BRCA_orf_restore == "N" ~
+        resistance_report %>%
+        str_replace_all(
+          "1\\.BRCA_restoration \\[SECONDARY_REVERSION",
+          "1.BRCA_secondary_mutation [SECONDARY_MUTATION"
+        ),
+
+      TRUE ~ resistance_report
+    ),
+
+    # --------------------------------------------------
+    # Update mechanism label
+    # --------------------------------------------------
+
+    main_driver_mechanism = case_when(
+
+      final_classifier == "1.BRCA_associated_adaptive_restoration" &
+        BRCA_orf_restore == "N" &
+        str_detect(main_driver, "SECONDARY_MUTATION") ~
+        "BRCA_secondary_mutation_event",
+
+      TRUE ~ main_driver_mechanism
+    ),
+
+    # --------------------------------------------------
+    # Optional:
+    # Update mechanism summary text
+    # --------------------------------------------------
+
+    mechanisms_involved = case_when(
+
+      final_classifier == "1.BRCA_associated_adaptive_restoration" &
+        BRCA_orf_restore == "N" ~
+        str_replace_all(
+          mechanisms_involved,
+          "BRCA_restoration",
+          "BRCA_secondary_mutation_event"
+        ),
+
+      TRUE ~ mechanisms_involved
+    )
+  )
+
+
+
+
+
+##########################################################################################################
+
+PRA_sentinel_genes <- c(
+  "BRCA1", "BRCA2",
+  "TP53BP1"
+)
+
+# ------------------------------------------------------
+# DEFINE GENE UNIVERSE
+# ------------------------------------------------------
+
+if (!exists("PRA_gene_universe")) {
+
+  PRA_gene_universe <- unique(
+    hrd_long$gene
+  )
+}
+
+# ======================================================
+# PRA CORE TABLE (ROW-LEVEL ANNOTATION)
+# ======================================================
+
+pra_events <- hrd_long %>%
+
+  filter(gene %in% PRA_gene_universe) %>%
+
+  mutate(
+
+    # --------------------------------------------------
+    # PRE CN STATE
+    # --------------------------------------------------
+
+    pre_cn_event = case_when(
+      cn_num_Pre < 2 ~ "CN_LOSS",
+      cn_num_Pre > 2 ~ "CN_GAIN",
+      TRUE ~ "CN_NEUTRAL"
+    ),
+
+    # --------------------------------------------------
+    # CN EVENT
+    # MUST MATCH EXPECTED RESISTANCE DIRECTION
+    # --------------------------------------------------
+
+    CN_event = case_when(
+
+      cn_direction == "LOSS" &
+        cn_num_Pre < 2 ~ TRUE,
+
+      cn_direction == "GAIN" &
+        cn_num_Pre > 2 ~ TRUE,
+
+      TRUE ~ FALSE
+    ),
+
+    CN_event_label = case_when(
+
+      cn_direction == "LOSS" &
+        cn_num_Pre < 2 ~ "CN_LOSS",
+
+      cn_direction == "GAIN" &
+        cn_num_Pre > 2 ~ "CN_GAIN",
+
+      TRUE ~ NA_character_
+    ),
+
+    # --------------------------------------------------
+    # SNV EVENT
+    # BRCA1/2 SNVs EXCLUDED
+    # --------------------------------------------------
+
+    SNV_event = case_when(
+
+      gene %in% c("BRCA1", "BRCA2") ~ FALSE,
+
+      snv_count_Pre > 0 &
+        snv_axis %in% c(
+          "POST_ACQUIRED_PATHOGENIC",
+          "SECONDARY_REVERSION"
+        ) ~ TRUE,
+
+      TRUE ~ FALSE
+    ),
+
+    # --------------------------------------------------
+    # UNIFIED EVENT TYPE
+    # --------------------------------------------------
+
+    PRA_event = case_when(
+
+      CN_event & SNV_event ~ "CN+SNV",
+
+      CN_event ~ "CN_EVENT",
+
+      SNV_event ~ "SNV_EVENT",
+
+      TRUE ~ NA_character_
+    ),
+
+    # --------------------------------------------------
+    # SENTINEL FLAG
+    # BRCA1/2 = CN ONLY
+    # TP53BP1 = CN OR SNV OR CN+SNV
+    # --------------------------------------------------
+
+    PRA_sentinel = case_when(
+
+      gene %in% c("BRCA1", "BRCA2") &
+        CN_event ~ TRUE,
+
+      gene == "TP53BP1" &
+        (CN_event | SNV_event) ~ TRUE,
+
+      TRUE ~ FALSE
+    ),
+
+    # --------------------------------------------------
+    # EVENT STRING
+    # --------------------------------------------------
+
+    PRA_event_string = case_when(
+
+      CN_event & SNV_event ~
+        paste0(gene, " [CN+SNV]"),
+
+      CN_event ~
+        paste0(gene, " [", CN_event_label, "]"),
+
+      SNV_event ~
+        paste0(gene, " [SNV]"),
+
+      TRUE ~ NA_character_
+    )
+
+  ) %>%
+
+  filter(!is.na(PRA_event)) %>%
+
+  ungroup()
+
+# ======================================================
+# HIGH-CONFIDENCE PRA
+# ======================================================
+
+pra_high_conf <- pra_events %>%
+
+  group_by(patient) %>%
+
+  summarise(
+
+    # --------------------------------------------------
+    # EVENT BURDEN
+    # --------------------------------------------------
+
+    PRA_event_burden =
+      n(),
+
+    # --------------------------------------------------
+    # GENE DIVERSITY
+    # --------------------------------------------------
+
+    PRA_gene_diversity =
+      n_distinct(gene),
+
+    # --------------------------------------------------
+    # SENTINEL PRESENCE
+    # --------------------------------------------------
+
+    PRA_sentinel_present =
+      any(PRA_sentinel, na.rm = TRUE),
+
+    # --------------------------------------------------
+    # BRCA + TP53BP1 COEVENT
+    # --------------------------------------------------
+
+    BRCA_TP53BP1_coevent =
+
+      any(
+        gene %in% c("BRCA1", "BRCA2") &
+          CN_event,
+        na.rm = TRUE
+      ) &
+
+      any(
+        gene == "TP53BP1" &
+          (CN_event | SNV_event),
+        na.rm = TRUE
+      ),
+
+    # --------------------------------------------------
+    # TP53BP1 STANDALONE SENTINEL EVENT
+    # --------------------------------------------------
+
+    TP53BP1_sentinel_event =
+
+      any(
+        gene == "TP53BP1" &
+          PRA_event %in% c(
+            "CN_EVENT",
+            "SNV_EVENT",
+            "CN+SNV"
+          ),
+        na.rm = TRUE
+      ),
+
+    # --------------------------------------------------
+    # HIGH CONFIDENCE CALL
+    # --------------------------------------------------
+
+    PRA_high_confidence =
+
+      (
+        PRA_sentinel_present &
+
+        (
+          PRA_event_burden >= 3 |
+
+          PRA_gene_diversity >= 3 |
+
+          BRCA_TP53BP1_coevent
+        )
+      ) |
+
+      TP53BP1_sentinel_event,
+
+    .groups = "drop"
+  )
+
+# ======================================================
+# PATIENT SUMMARY
+# ======================================================
+
+pra_summary <- pra_events %>%
+
+  group_by(patient) %>%
+
+  summarise(
+
+    PRA_events =
+      paste(
+        sort(unique(PRA_event_string)),
+        collapse = "; "
+      ),
+
+    PRA_event_count =
+      n(),
+
+    PRA_gene_count =
+      n_distinct(gene),
+
+    PRA_sentinel_count =
+      sum(PRA_sentinel, na.rm = TRUE),
+
+    .groups = "drop"
+  ) %>%
+
+  mutate(
+
+    Evidence_of_PRA =
+      ifelse(
+        PRA_event_count >= 1,
+        "Y",
+        "N"
+      )
+  )
+
+# ======================================================
+# MERGE INTO MAIN OUTPUT
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+
+  left_join(
+    pra_summary,
+    by = "patient"
+  ) %>%
+
+  left_join(
+    pra_high_conf,
+    by = "patient"
+  ) %>%
+
+  mutate(
+
+    Evidence_of_PRA =
+      ifelse(is.na(Evidence_of_PRA), "N", Evidence_of_PRA),
+
+    PRA_events =
+      ifelse(is.na(PRA_events), ".", PRA_events),
+
+    PRA_event_count =
+      ifelse(is.na(PRA_event_count), 0, PRA_event_count),
+
+    PRA_gene_count =
+      ifelse(is.na(PRA_gene_count), 0, PRA_gene_count),
+
+    PRA_sentinel_count =
+      ifelse(is.na(PRA_sentinel_count), 0, PRA_sentinel_count),
+
+    PRA_high_confidence =
+      ifelse(is.na(PRA_high_confidence), FALSE, PRA_high_confidence)
+  )
+
+##########################################################################################################
+# ======================================================
+# PATIENT RESISTANCE SUMMARY
+# ======================================================
+
+hrd_status_wide <- hrd_status_wide %>%
+
+  mutate(
+
+resistance_summary = case_when(
+
+  # ==================================================
+  # 1A. BRCA ORF RESTORATION
+  # ==================================================
+
+  final_classifier == "1.BRCA_associated_adaptive_restoration" &
+    PRA_high_confidence &
+    BRCA_orf_restore == "Y" ~
+
+    "1A+PRA : BRCA restoration emerging on a background of pre-existing adaptive HR architecture.",
+
+  final_classifier == "1.BRCA_associated_adaptive_restoration" &
+    !PRA_high_confidence &
+    BRCA_orf_restore == "Y" ~
+
+    "1A-PRA : BRCA restoration with limited evidence of PRA.",
+
+  # ==================================================
+  # 1B. ACQUIRED BRCA MUTATION
+  # ==================================================
+
+  final_classifier == "1.BRCA_associated_adaptive_restoration" &
+    PRA_high_confidence &
+    BRCA_orf_restore == "N" ~
+
+    "1B+PRA : Acquired BRCA mutations emerging on a background of pre-existing adaptive HR architecture.",
+
+  final_classifier == "1.BRCA_associated_adaptive_restoration" &
+    !PRA_high_confidence &
+    BRCA_orf_restore == "N" ~
+
+    "1B-PRA : Acquired BRCA mutations with limited evidence of PRA.",
+
+
+
+      # ==================================================
+      # 2A. HR BYPASS
+      # ==================================================
+
+      final_classifier == "2a.HR_bypass" &
+        PRA_high_confidence ~
+
+        "2A+PRA : Acquired HR bypass resistance emerging on a background of pre-existing adaptive HR architecture.",
+
+      final_classifier == "2a.HR_bypass" ~
+
+        "2A-PRA : Acquired HR bypass resistance with limited evidence of PRA.",
+
+
+      # ==================================================
+      # 2B. FORK PROTECTION
+      # ==================================================
+
+      final_classifier == "2b.Fork_protection" &
+        PRA_high_confidence ~
+
+        "2B+PRA :Acquired fork protection resistance emerging on a background of pre-existing adaptive HR architecture.",
+
+      final_classifier == "2b.Fork_protection" ~
+
+        "2B-PRA :Acquired fork protection resistance with limited evidence of PRA.",
+
+
+      # ==================================================
+      # 2C. DRUG TARGET ADAPTATION
+      # ==================================================
+
+      final_classifier == "2c.Drug_target_adaptation" &
+        PRA_high_confidence ~
+
+        "2C+PRA :Acquired drug target adaptation emerging on a background of pre-existing adaptive HR architecture.",
+
+      final_classifier == "2c.Drug_target_adaptation" ~
+
+        "2C-PRA :Acquired drug target adaptation with limited evidence of PRA.",
+
+
+
+      # ==================================================
+      # 3. NO CLEAR RESISTANCE
+      # ==================================================
+
+      final_classifier == "3.No_clear_genomic_resistance" &
+        PRA_high_confidence ~
+
+        "3+PRA :No dominant acquired resistance mechanism identified despite evidence of pre-existing adaptive resistance architecture.",
+
+      final_classifier == "3.No_clear_genomic_resistance" ~
+
+        "3-PRA :No dominant acquired resistance mechanism identified with limited evidence of PRA.",
+
+      TRUE ~ NA_character_
+    )
+  )
+
+
+
+
+###########################################
+# JOURNEY AND HEADLINE
+###########################################
+
+library(dplyr)
+library(stringr)
+
+hrd_status_wide <- hrd_status_wide %>%
+  mutate(
+
+    # ==================================================
+    # HEADLINE
+    # ==================================================
+
+    resistance_headline = case_when(
+
+      final_classifier == "1.BRCA_associated_adaptive_restoration" &
+        BRCA_orf_restore == "Y" ~
+        "BRCA restoration",
+
+      final_classifier == "1.BRCA_associated_adaptive_restoration" &
+        BRCA_orf_restore == "N" ~
+        "Acquired BRCA-associated adaptation",
+
+      final_classifier == "2a.HR_bypass" ~
+        "HR bypass",
+
+      final_classifier == "2b.Fork_protection" ~
+        "Fork protection",
+
+      final_classifier == "2c.Drug_target_adaptation" ~
+        "Drug target adaptation",
+
+      final_classifier == "3.No_clear_genomic_resistance" ~
+        "No clear genomic resistance",
+
+      TRUE ~ NA_character_
+    ),
+
+    # ==================================================
+    # JOURNEY COMPONENTS
+    # ==================================================
+
+    pra_component = case_when(
+
+      PRA_high_confidence == TRUE ~
+        "Pre-relapse adaptive resistance features were present",
+
+      TRUE ~
+        "Limited evidence of pre-relapse adaptive resistance"
+    ),
+
+    # --------------------------------------------------
+    # Suppress mechanistic events for Class 3
+    # --------------------------------------------------
+
+    brca_component = case_when(
+
+      final_classifier == "3.No_clear_genomic_resistance" ~
+        NA_character_,
+
+      str_detect(coalesce(resistance_report, ""), "SECONDARY_REVERSION") ~
+        "followed by acquisition of a BRCA reversion event",
+
+      str_detect(coalesce(resistance_report, ""), "SECONDARY_MUTATION") ~
+        "followed by acquisition of a secondary BRCA mutation",
+
+      str_detect(coalesce(resistance_report, ""), "BRCA_restoration") ~
+        "followed by BRCA copy-number restoration",
+
+      TRUE ~ NA_character_
+    ),
+
+    hr_component = case_when(
+
+      final_classifier == "3.No_clear_genomic_resistance" ~
+        NA_character_,
+
+      str_detect(coalesce(mechanisms_involved, ""), "HR_bypass") ~
+        "with concurrent HR bypass features",
+
+      TRUE ~ NA_character_
+    ),
+
+    fork_component = case_when(
+
+      final_classifier == "3.No_clear_genomic_resistance" ~
+        NA_character_,
+
+      str_detect(coalesce(mechanisms_involved, ""), "fork_protection") ~
+        "with evidence of fork protection biology",
+
+      TRUE ~ NA_character_
+    ),
+
+    parp_component = case_when(
+
+      final_classifier == "3.No_clear_genomic_resistance" ~
+        NA_character_,
+
+      str_detect(coalesce(mechanisms_involved, ""), "drug_target_adaptation") ~
+        "with evidence of PARP pathway adaptation",
+
+      TRUE ~ NA_character_
+    )
+  ) %>%
+
+  rowwise() %>%
+
+  mutate(
+
+    resistance_journey = paste(
+      na.omit(c(
+        pra_component,
+        brca_component,
+        hr_component,
+        fork_component,
+        parp_component
+      )),
+      collapse = " "
+    ) %>%
+      str_squish()
+
+  ) %>%
+
+  ungroup() %>%
+
+  select(
+    -pra_component,
+    -brca_component,
+    -hr_component,
+    -fork_component,
+    -parp_component
+  )
+
+
+# ======================================================
+# FINAL OUTPUT TABLE
+# ======================================================
+
+final_out <- hrd_status_wide %>%
+
+  select(
+
+    patient,
+
+    final_classifier,
+
+    final_classifier_description,
+
+    BRCA_context,
+    
+    PRE_CN_GOI_SUMMARY, 
+    
+    PRA_high_confidence,
+    
+    PRA_events,
+
+    PRA_event_count,
+    
+    PRE_SNV_SUMMARY,
+    
+    POST_SNV_SUMMARY,
+    
+    resistance_report,
+
+    main_driver,
+
+    total_driver_events,
+
+    BRCA_CN_change,
+    
+    BRCA_orf_restore,
+    
+    Tumor_Evolution,
+    
+    SNV_Gene_Evolution,
+
+    pathways_involved,
+
+    mechanisms_involved,
+
+    VUS_post_only_count,
+
+    VUS_post_only_genes,
+    
+    resistance_summary,
+
+    resistance_headline,
+
+    resistance_journey
+
+  ) %>%
+
+  distinct()
+  
+  
+
+# ======================================================
+# OPTIONAL PATIENT EXCLUSIONS
+# Load exclude.txt and remove patients before output
+# ======================================================
+
+exclude_ids <- read.delim(
+  "exclude.txt",
+  header = TRUE,
+  stringsAsFactors = FALSE
+)
+
+# Clean IDs
+exclude_ids <- exclude_ids %>%
+  mutate(patient = trimws(patient))
+
+# Vector of excluded patients
+exclude_patients <- unique(exclude_ids$patient)
+
+# ------------------------------------------------------
+# Remove excluded patients from final tables
+# ------------------------------------------------------
+
+driver_events <- driver_events %>%
+  filter(!patient %in% exclude_patients)
+
+hrd_status_wide <- hrd_status_wide %>%
+  filter(!patient %in% exclude_patients)
+
+final_out <- final_out %>%
+  filter(!patient %in% exclude_patients)
+
+# Apply the same exclusions to the separate VUS review products.
+vus_review <- vus_review %>%
+  filter(!patient %in% exclude_patients)
+
+vus_patient_summary <- vus_patient_summary %>%
+  filter(!patient %in% exclude_patients)
+
+
+
+  
+#############################
+# OUTPUTS — v12-1
+#############################
+
+write.table(
+  vus_review,
+  "post_treatment_VUS_review_v12-1.txt",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  na = "."
+)
+
+write.table(
+  vus_patient_summary,
+  "VUS_patient_summary_v12-1.txt",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  na = "."
+)
+
+
+write.table(
+  driver_events,
+  "driver_events_v12-1.txt",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+write.table(
+  hrd_status_wide,
+  "hrd_status_wide_v12-1.txt",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+write.table(
+  final_out,
+  "final_out_v12-1.txt",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+
+
+supplementary_resistance_journey <- hrd_status_wide %>%
+
+  select(
+    patient,
+    final_classifier,
+    resistance_headline,
+    resistance_journey
+  ) %>%
+
+  distinct()
+
+  write.table(
+  supplementary_resistance_journey,
+  "supplementary_resistance_journey_v12-1.txt",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+                                                                      
